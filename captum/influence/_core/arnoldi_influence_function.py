@@ -737,7 +737,7 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             # `jacobians`` is a tensor of tuples. unlike parameters, however, the first
             # dimension is a batch dimension
             jacobians = _compute_jacobian_sample_wise_grads_per_batch(
-                self, features, labels, loss_fn, reduction_type
+                self, features, labels, loss_fn, reduction_type, test
             )
 
             # `jacobians`` contains the per-example parameters for a batch. this
