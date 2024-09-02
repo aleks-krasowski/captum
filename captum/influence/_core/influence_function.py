@@ -1018,7 +1018,7 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             # column of `self.R`, to avoid moving the entire `self.R` to gpu all at
             # once and running out of gpu memory
             batch_jacobians = _basic_computation_naive_influence_function(
-                self, batch[0:-1], batch[-1], loss_fn, reduction_type
+                self, batch[0:-1], batch[-1], loss_fn, reduction_type, test
             )
             if self.R.device == torch.device(
                 "cpu"
@@ -1291,6 +1291,7 @@ def _basic_computation_naive_influence_function(
     targets: Optional[Tensor] = None,
     loss_fn: Optional[Union[Module, Callable]] = None,
     reduction_type: Optional[str] = None,
+    test: bool = False,
 ) -> Tensor:
     """
     This computes the per-example parameter gradients for a batch, flattened into a
@@ -1303,7 +1304,7 @@ def _basic_computation_naive_influence_function(
     # dimensions correspond to the parameter, so that for the tensor corresponding
     # to parameter `p`, its shape is `(batch_size, *p.shape)`
     jacobians = _compute_jacobian_sample_wise_grads_per_batch(
-        influence_inst, inputs, targets, loss_fn, reduction_type
+        influence_inst, inputs, targets, loss_fn, reduction_type, test
     )
 
     return torch.stack(
