@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# autopep8: off 
 import threading
 import typing
 import warnings
@@ -790,18 +791,28 @@ def _compute_jacobian_wrt_params(
 
         if layer_modules is not None:
             layer_parameters = _extract_parameters_from_layers(layer_modules)
-        grads_list = [
-            torch.autograd.grad(
+        else:
+            layer_parameters = list(model.parameters())
+
+        grads_list = []
+        for i in range(out.shape[0]):
+            grads = torch.autograd.grad(
                 outputs=out[i],
-                inputs=cast(
-                    Union[Tensor, Sequence[Tensor]],
-                    model.parameters() if layer_modules is None else layer_parameters,
-                ),
+                inputs=layer_parameters,
                 grad_outputs=torch.ones_like(out[i]),
                 retain_graph=True,
+                # allow for None-Gradients
+                # useful for multiple grad operations (often case in PINNs)
+                # as bias will become 0
+                # hence will throw an error
+                allow_unused=True,
             )
-            for i in range(out.shape[0])
-        ]
+            grads_w_zeros = [
+                g if g is not None else torch.zeros_like(p)
+                for g, p in zip(grads, layer_parameters)
+            ]
+            grads_list.append(grads_w_zeros)
+
         grads = tuple([torch.stack(x) for x in zip(*grads_list)])
 
         return tuple(grads)
