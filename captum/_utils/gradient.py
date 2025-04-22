@@ -793,6 +793,10 @@ def _compute_jacobian_wrt_params(
             layer_parameters = _extract_parameters_from_layers(layer_modules)
         else:
             layer_parameters = list(model.parameters())
+            # ensure that all parameters require gradients
+            for i in range(len(layer_parameters)):
+                if not layer_parameters[i].requires_grad:
+                    layer_parameters[i].requires_grad = True
 
         grads_list = []
         for i in range(out.shape[0]):
