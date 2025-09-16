@@ -2,6 +2,7 @@
 import functools
 from typing import Any, Callable, List, Optional, Tuple, Union
 
+import os
 import torch
 
 from captum._utils.gradient import _extract_parameters_from_layers
@@ -1020,3 +1021,110 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         return _self_influence_helper_intermediate_quantities_influence_function(
             self, inputs_dataset, show_progress
         )
+
+
+class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
+    """
+    This is a wrapper around ArnoldiInfluenceFunction that allows to save and load precomputed R.
+
+    Same API as ArnoldiInfluenceFunction, plus:
+    Args:
+      r_cache_path (str, optional): file to save/load precomputed R
+      prefer_load_R (bool): if True and cache exists, load R instead of recomputing
+    """
+
+    def __init__(
+        self,
+        model: Module,
+        train_dataset: Union[Dataset, DataLoader],
+        checkpoint: str,
+        checkpoints_load_func: Callable = _load_flexible_state_dict,
+        layers: Optional[List[str]] = None,
+        loss_fn: Optional[Union[Module, Callable]] = None,
+        batch_size: Union[int, None] = 1,
+        hessian_dataset: Optional[Union[Dataset, DataLoader]] = None,
+        test_loss_fn: Optional[Union[Module, Callable]] = None,
+        sample_wise_grads_per_batch: bool = False,
+        projection_dim: int = 50,
+        seed: int = 0,
+        arnoldi_dim: int = 200,
+        arnoldi_tol: float = 1e-1,
+        hessian_reg: float = 1e-3,
+        hessian_inverse_tol: float = 1e-4,
+        projection_on_cpu: bool = True,
+        show_progress: bool = False,
+        # New caching knobs
+        r_cache_path: Optional[str] = None,
+        prefer_load_R: bool = True,
+    ):
+        # Initialize the base class as usual
+        # >>> Original ArnoldiInfluenceFunction.__init__ >>>
+        InfluenceFunctionBase.__init__(
+            self,
+            model,
+            train_dataset,
+            checkpoint,
+            checkpoints_load_func,
+            layers,
+            loss_fn,
+            batch_size,
+            hessian_dataset,
+            test_loss_fn,
+            sample_wise_grads_per_batch,
+        )
+
+        self.projection_dim = projection_dim
+        torch.manual_seed(seed)  # for reproducibility
+
+        self.arnoldi_dim = arnoldi_dim
+        self.arnoldi_tol = arnoldi_tol
+        self.hessian_reg = hessian_reg
+        self.hessian_inverse_tol = hessian_inverse_tol
+
+        # infer the device the model is on.  all parameters are assumed to be on the
+        # same device
+        self.model_device = next(model.parameters()).device
+
+        self.R = self._retrieve_projections_arnoldi_influence_function(
+            self.hessian_dataloader,
+            projection_on_cpu,
+            show_progress,
+        )
+        # <<< Original ArnoldiInfluenceFunction.__init__ <<<
+
+        # Caching controls
+        self._r_cache_path = r_cache_path
+        self._prefer_load_R = prefer_load_R
+
+        # Load R if desired and exists
+        if self._prefer_load_R and self._r_cache_path and os.path.exists(self._r_cache_path):
+            self.R = self.load_R(self._r_cache_path) 
+        else:
+            # fall back to original computation
+            self.R = self._retrieve_projections_arnoldi_influence_function(
+                self.hessian_dataloader,
+                projection_on_cpu,
+                show_progress,
+            )
+            
+            # save if path given
+            if self._r_cache_path:
+                self.save_R(self._r_cache_path)
+
+    def save_R(self, path: str) -> None:
+        """Save R as CPU tensors with light metadata."""
+        payload = {
+            "R": [
+                tuple(t.detach().cpu() for t in tup)
+                for tup in self.R  # type: ignore[attr-defined]
+            ]
+        }
+        torch.save(payload, path)
+
+    def load_R(self, path: str) -> List[Tuple[Tensor, ...]]:
+        """Load R and move to the current model device."""
+        obj = torch.load(path, map_location="cpu")
+        R_cpu = obj["R"]
+        dev = self.model_device
+        R = [tuple(t.to(dev) for t in tup) for tup in R_cpu]
+        return R
