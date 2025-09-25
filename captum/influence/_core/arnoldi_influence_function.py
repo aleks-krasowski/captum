@@ -1085,11 +1085,6 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         # same device
         self.model_device = next(model.parameters()).device
 
-        self.R = self._retrieve_projections_arnoldi_influence_function(
-            self.hessian_dataloader,
-            projection_on_cpu,
-            show_progress,
-        )
         # <<< Original ArnoldiInfluenceFunction.__init__ <<<
 
         # Caching controls
