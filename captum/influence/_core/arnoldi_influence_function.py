@@ -1108,6 +1108,9 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
 
     def save_R(self, path: str) -> None:
         """Save R as CPU tensors with light metadata."""
+        if not os.path.exists(os.path.dirname(path)):
+            os.makedirs(os.path.dirname(path))
+
         payload = {
             "R": [
                 tuple(t.detach().cpu() for t in tup)
