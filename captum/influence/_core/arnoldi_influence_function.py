@@ -626,6 +626,8 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             qs, H, self.projection_dim, self.hessian_reg, self.hessian_inverse_tol
         )
 
+        self.eigenvalues = ls.clone()
+
         # if `vs` were a 2D tensor whose columns contain the top eigenvectors of the
         # aforementioned hessian, then `R` would be `vs @ torch.diag(ls ** -0.5)`, i.e.
         # scaling each column of `vs` by the corresponding entry in `ls ** -0.5`.
