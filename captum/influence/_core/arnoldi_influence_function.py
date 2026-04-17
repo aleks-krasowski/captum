@@ -1060,6 +1060,8 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         # New caching knobs
         r_cache_path: Optional[str] = None,
         prefer_load_R: bool = True,
+        trainset_gradients_cache_path: Optional[str] = None,
+        prefer_precomputing_trainset_gradients: bool = False,
     ):
         # Initialize the base class as usual
         # >>> Original ArnoldiInfluenceFunction.__init__ >>>
@@ -1094,10 +1096,18 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         # Caching controls
         self._r_cache_path = r_cache_path
         self._prefer_load_R = prefer_load_R
+        self._trainset_gradients_cache_path = trainset_gradients_cache_path
+        self._prefer_precomputing_trainset_gradients = (
+            prefer_precomputing_trainset_gradients
+        )
 
         # Load R if desired and exists
-        if self._prefer_load_R and self._r_cache_path and os.path.exists(self._r_cache_path):
-            self.R = self.load_R(self._r_cache_path) 
+        if (
+            self._prefer_load_R
+            and self._r_cache_path
+            and os.path.exists(self._r_cache_path)
+        ):
+            self.R = self.load_R(self._r_cache_path)
         else:
             # fall back to original computation
             self.R = self._retrieve_projections_arnoldi_influence_function(
@@ -1105,7 +1115,7 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
                 projection_on_cpu,
                 show_progress,
             )
-            
+
             # save if path given
             if self._r_cache_path:
                 self.save_R(self._r_cache_path)
@@ -1130,3 +1140,233 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         dev = self.model_device
         R = [tuple(t.to(dev) for t in tup) for tup in R_cpu]
         return R
+
+    @log_usage(skip_self_logging=True)
+    def influence(  # type: ignore[override]
+        self,
+        inputs: Tuple,
+        k: Optional[int] = None,
+        proponents: bool = True,
+        show_progress: bool = False,
+    ) -> Union[Tensor, KMostInfluentialResults]:
+        """
+        This is the key method of this class, and can be run in 2 different modes,
+        where the mode that is run depends on the arguments passed to this method:
+
+        - influence score mode: This mode is used if `k` is None. This mode computes
+          the influence score of every example in training dataset `train_dataset`
+          on every example in the test dataset represented by `inputs`.
+        - k-most influential mode: This mode is used if `k` is not None, and an int.
+          This mode computes the proponents or opponents of every example in the
+          test dataset represented by `inputs`. In particular, for each test example in
+          the test dataset, this mode computes its proponents (resp. opponents),
+          which are the indices in the training dataset `train_dataset` of the
+          training examples with the `k` highest (resp. lowest) influence scores on the
+          test example. Proponents are computed if `proponents` is True. Otherwise,
+          opponents are computed. For each test example, this method also returns the
+          actual influence score of each proponent (resp. opponent) on the test
+          example.
+
+        Args:
+
+            inputs (tuple): `inputs` is the test batch and is a tuple of
+                    any, where the last element is assumed to be the labels for the
+                    batch. That is, `model(*batch[0:-1])` produces the output for
+                    `model`, and `batch[-1]` are the labels, if any. This is the same
+                    assumption made for each batch yielded by training dataset
+                    `train_dataset` - please see its documentation in `__init__` for
+                    more details on the assumed structure of a batch.
+            k (int, optional): If not provided or `None`, the influence score mode will
+                    be run. Otherwise, the k-most influential mode will be run,
+                    and `k` is the number of proponents / opponents to return per
+                    example in the test dataset.
+                    Default: None
+            proponents (bool, optional): Whether seeking proponents (`proponents=True`)
+                    or opponents (`proponents=False`), if running in k-most influential
+                    mode.
+                    Default: True
+            show_progress (bool, optional): For all modes, computation of results
+                    requires "training dataset computations": computations for each
+                    batch in the training dataset `train_dataset`, which may
+                    take a long time. If `show_progress` is true, the progress of
+                    "training dataset computations" will be displayed. In particular,
+                    the number of batches for which computations have been performed
+                    will be displayed. It will try to use tqdm if available for
+                    advanced features (e.g. time estimation). Otherwise, it will
+                    fallback to a simple output of progress.
+                    Default: False
+
+        Returns:
+            The return value of this method depends on which mode is run.
+
+            - influence score mode: if this mode is run (`k` is None), returns a 2D
+              tensor `influence_scores` of shape `(input_size, train_dataset_size)`,
+              where `input_size` is the number of examples in the test dataset, and
+              `train_dataset_size` is the number of examples in training dataset
+              `train_dataset`. In other words, `influence_scores[i][j]` is the
+              influence score of the `j`-th example in `train_dataset` on the `i`-th
+              example in the test dataset.
+            - k-most influential mode: if this mode is run (`k` is an int), returns
+              a namedtuple `(indices, influence_scores)`. `indices` is a 2D tensor of
+              shape `(input_size, k)`, where `input_size` is the number of examples in
+              the test dataset. If computing proponents (resp. opponents),
+              `indices[i][j]` is the index in training dataset `train_dataset` of the
+              example with the `j`-th highest (resp. lowest) influence score (out of
+              the examples in `train_dataset`) on the `i`-th example in the test
+              dataset. `influence_scores` contains the corresponding influence scores.
+              In particular, `influence_scores[i][j]` is the influence score of example
+              `indices[i][j]` in `train_dataset` on example `i` in the test dataset
+              represented by `inputs`.
+        """
+        return _influence_route_to_helpers(
+            self,
+            inputs,
+            k,
+            proponents,
+            show_progress=show_progress,
+        )
+
+    def _influence(
+        self,
+        inputs: Union[Tuple[Any, ...], DataLoader],
+        show_progress: bool = False,
+    ) -> Tensor:
+        r"""
+        Args:
+
+            inputs (tuple): `inputs` is the test batch and is a tuple of
+                    any, where the last element is assumed to be the labels for the
+                    batch. That is, `model(*batch[0:-1])` produces the output for
+                    `model`, and `batch[-1]` are the labels, if any. This is the same
+                    assumption made for each batch yielded by training dataset
+                    `train_dataset` - please see its documentation in `__init__` for
+                    more details on the assumed structure of a batch.
+            show_progress (bool, optional): To compute the influence of examples in
+                    training dataset `train_dataset`, we compute the influence
+                    of each batch. If `show_progress` is true, the progress of this
+                    computation will be displayed. In particular, the number of batches
+                    for which influence has been computed will be displayed. It will
+                    try to use tqdm if available for advanced features (e.g. time
+                    estimation). Otherwise, it will fallback to a simple output of
+                    progress.
+                    Default: False
+
+        Returns:
+            influence_scores (Tensor): Influence scores over the entire
+                    training dataset `train_dataset`. Dimensionality is
+                    (inputs_batch_size, src_dataset_size). For example:
+                    influence_scores[i][j] = the influence score for the j-th training
+                    example to the i-th example in the test dataset.
+        """
+
+        def _influence_helper_intermediate_quantities_influence_function_w_caching(
+            influence_inst: "IntermediateQuantitiesInfluenceFunction",
+            inputs_dataset: Union[Tuple[Any, ...], DataLoader],
+            show_progress: bool,
+        ) -> Tensor:
+            """
+            Helper function that computes influence scores for implementations of
+            `NaiveInfluenceFunction` which implement the `compute_intermediate_quantities`
+            method returning "embedding" vectors, so that the influence score of one example
+            on another is the dot-product of their vectors.
+            """
+            # If `inputs_dataset` is not a `DataLoader`, turn it into one.
+            inputs_dataset = _format_inputs_dataset(inputs_dataset)
+
+            inputs_intermediate_quantities = (
+                influence_inst.compute_intermediate_quantities(
+                    inputs_dataset,
+                    show_progress=show_progress,
+                    test=True,
+                )
+            )
+
+            if (
+                self._prefer_precomputing_trainset_gradients
+                and self._trainset_gradients_cache_path
+                and os.path.exists(self._trainset_gradients_cache_path)
+            ):
+                # cache exists, load it
+                trainset_intermediate_quantities = torch.load(
+                    self._trainset_gradients_cache_path, map_location="cpu"
+                )
+                if show_progress:
+                    print(
+                        f"Loaded precomputed trainset intermediate quantities from {self._trainset_gradients_cache_path}"
+                    )
+                # move to correct device
+                device = self.model.parameters().__next__().device
+                trainset_intermediate_quantities = trainset_intermediate_quantities.to(
+                    device
+                )
+                inputs_intermediate_quantities = inputs_intermediate_quantities.to(
+                    device
+                )
+
+                return torch.matmul(
+                    inputs_intermediate_quantities,
+                    trainset_intermediate_quantities.T,
+                )
+            else:
+                # precomputing for caching
+                train_dataloader = influence_inst.train_dataloader
+                if show_progress:
+                    train_dataloader = _progress_bar_constructor(
+                        influence_inst,
+                        train_dataloader,
+                        "train_dataset",
+                        "influence scores",
+                    )
+
+                if self._trainset_gradients_cache_path:
+                    # save trainset intermediate quantities while computing them
+                    all_batches = []
+                    for batch in train_dataloader:
+                        batch_intermediate_quantities = (
+                            influence_inst.compute_intermediate_quantities(batch)
+                        )
+                        batch_intermediate_quantities = (
+                            batch_intermediate_quantities.detach().cpu()
+                        )
+                        all_batches.append(batch_intermediate_quantities)
+                    trainset_intermediate_quantities = torch.cat(all_batches, dim=0)
+                    torch.save(
+                        trainset_intermediate_quantities,
+                        self._trainset_gradients_cache_path,
+                    )
+                    if show_progress:
+                        print(
+                            f"Saved precomputed trainset intermediate quantities to {self._trainset_gradients_cache_path}"
+                        )
+                    # move back to correct device
+                    device = self.model.parameters().__next__().device
+                    trainset_intermediate_quantities = (
+                        trainset_intermediate_quantities.to(device)
+                    )
+                    inputs_intermediate_quantities = inputs_intermediate_quantities.to(
+                        device
+                    )
+
+                    return torch.matmul(
+                        inputs_intermediate_quantities,
+                        trainset_intermediate_quantities.T,
+                    )
+                else:
+                    # no caching
+                    return torch.cat(
+                        [
+                            torch.matmul(
+                                inputs_intermediate_quantities,
+                                influence_inst.compute_intermediate_quantities(batch).T,
+                            )
+                            for batch in train_dataloader
+                        ],
+                        dim=1,
+                    )
+
+        # turn inputs and targets into a dataset. inputs has already been processed
+        # so that it should always be unpacked
+        inputs_dataset = _format_inputs_dataset(inputs)
+        return _influence_helper_intermediate_quantities_influence_function_w_caching(
+            self, inputs_dataset, show_progress
+        )
