@@ -1,5 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 import functools
+import itertools
+import warnings
 from typing import Any, Callable, List, Literal, Optional, Tuple, Union
 
 import os
@@ -227,6 +229,82 @@ def _parameter_distill(
     vs_standard = [_parameter_linear_combination(qs, v) for v in vs.T]
 
     return ls, vs_standard
+
+
+def _hessian_is_symmetric(
+    vhp: Callable[[Tuple[Tensor, ...]], Tuple[Tensor, ...]], params: Tuple[Tensor, ...]
+) -> bool:
+    """
+    `vhp` returns H^T v, which is H v if the Hessian H is symmetric, as for any twice
+    continuously differentiable loss. w^T (H^T v) = v^T (H^T w) holds for random
+    v, w only if H = H^T, so two products suffice. Warns if H is not symmetric.
+    """
+    # own generator: the test vectors neither depend on nor advance the global state
+    gen = torch.Generator(device=params[0].device).manual_seed(0)
+    v, w = (
+        tuple(
+            torch.randn(t.shape, generator=gen, device=t.device, dtype=t.dtype)
+            for t in params
+        )
+        for _ in range(2)
+    )
+    a = sum((wi * hi).sum() for wi, hi in zip(w, vhp(v)))
+    b = sum((vi * hi).sum() for vi, hi in zip(v, vhp(w)))
+    if abs(a - b) <= 1e-4 * (abs(a) + abs(b)):
+        return True
+    warnings.warn(
+        "Hessian of the loss is not symmetric (e.g. a custom backward that is not "
+        "a true derivative); using hvp (H v) instead of vhp (H^T v), which is "
+        "slower and needs more memory."
+    )
+    return False
+
+
+def _cached_hvp(
+    loss_fn: Callable, params: Tuple[Tensor, ...]
+) -> Callable[[Tuple[Tensor, ...]], Tuple[Tensor, ...]]:
+    """
+    Returns `v -> H v` for the Hessian `H` of `loss_fn` at `params`, the same as
+    `torch.autograd.functional.hvp(loss_fn, params, v=v)[1]` up to roundoff. That
+    function redoes the forward pass and builds a double-backward graph on every
+    call; here the gradient graph is built once, so each product is one backward
+    pass.
+    """
+
+    def grad(outputs, inputs, grad_outputs, create_graph):
+        # as in `torch.autograd.functional`: skip outputs that don't depend on
+        # `inputs`, and return zeros instead of None for unused inputs
+        pairs = [(o, g) for o, g in zip(outputs, grad_outputs) if o.requires_grad]
+        grads = (
+            torch.autograd.grad(
+                [o for o, _ in pairs],
+                inputs,
+                [g for _, g in pairs],
+                retain_graph=True,
+                create_graph=create_graph,
+                allow_unused=True,
+            )
+            if pairs
+            else (None,) * len(inputs)
+        )
+        return tuple(
+            torch.zeros_like(i) if g is None else g for g, i in zip(grads, inputs)
+        )
+
+    p = tuple(param.detach().requires_grad_() for param in params)
+    loss = loss_fn(*p)
+    g = grad((loss,), p, (torch.ones_like(loss),), create_graph=True)
+
+    def vhp(v):  # H^T v
+        return grad(g, p, v, create_graph=False)
+
+    if _hessian_is_symmetric(vhp, p):
+        return vhp
+
+    u = tuple(torch.zeros_like(t, requires_grad=True) for t in g)
+    # `Hu` = H^T u is linear in `u`, so its gradient w.r.t. `u` along `v` is H v
+    Hu = grad(g, p, u, create_graph=True)
+    return lambda v: grad(Hu, u, v, create_graph=False)
 
 
 class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
@@ -559,14 +637,20 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             return tensor_tuple_loss
 
         # define function that given batch and vector, returns HVP of loss using the
-        # batch and vector
-        def batch_HVP(batch, v):
+        # batch and vector. for symmetric H (checked below), H v = H^T v, and vhp
+        # (H^T v) is faster and needs less memory than hvp (H v)
+        def batch_HVP(batch, v, symmetric=True):
             tensor_tuple_loss = tensor_tuple_loss_given_batch(batch)
-            return torch.autograd.functional.hvp(tensor_tuple_loss, params, v=v)[1]
+            product = (
+                torch.autograd.functional.vhp
+                if symmetric
+                else torch.autograd.functional.hvp
+            )
+            return product(tensor_tuple_loss, params, v=v)[1]
 
         # define function that returns HVP of loss over `dataloader`, given a
         # specified vector
-        def HVP(v):
+        def HVP(v, symmetric=True):
             _hvp = None
 
             _dataloader = dataloader
@@ -577,7 +661,9 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
 
             # the HVP of loss using the entire `dataloader` is the sum of the
             # per-batch HVP's
-            return _dataset_fn(_dataloader, batch_HVP, _parameter_add, v)
+            return _dataset_fn(
+                _dataloader, batch_HVP, _parameter_add, v, symmetric=symmetric
+            )
 
             for batch in _dataloader:
                 hvp = batch_HVP(batch, v)
@@ -586,6 +672,24 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
                 else:
                     _hvp = _parameter_add(_hvp, hvp)
             return _hvp
+
+        # all HVPs below use the same params, so with a single batch the graph is
+        # built once instead of once per HVP (same result up to roundoff; for
+        # PINNs R builds >2x faster and with less memory, see `_cached_hvp`).
+        # with several batches each batch's graph is still rebuilt per HVP, so
+        # that peak memory stays at one batch's graph.
+        # every DataLoader iterator draws from the global random state; restore it
+        # so Arnoldi's random start below, and hence R, are as before for a seed
+        with torch.random.fork_rng(devices=range(torch.cuda.device_count())):
+            first_batches = list(itertools.islice(dataloader, 2))
+            if len(first_batches) == 1:
+                hvp_fn = _cached_hvp(
+                    tensor_tuple_loss_given_batch(first_batches[0]), params
+                )
+            elif _hessian_is_symmetric(HVP, params):
+                hvp_fn = HVP
+            else:
+                hvp_fn = functools.partial(HVP, symmetric=False)
 
         # now that can compute the hessian-vector product (of loss over `dataloader`),
         # can perform arnoldi iteration
@@ -605,7 +709,7 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         # perform the arnoldi iteration, see its documentation for what its return
         # values are.  note that `H` is *not* the Hessian.
         qs, H = _parameter_arnoldi(
-            HVP,
+            hvp_fn,
             b,
             self.arnoldi_dim,
             self.arnoldi_tol,
