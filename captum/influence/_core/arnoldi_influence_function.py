@@ -735,6 +735,15 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         loss_fn = self.test_loss_fn if test else self.loss_fn
         reduction_type = self.test_reduction_type if test else self.reduction_type
 
+        # vectorized: `R` as one (num_params, projection_dim) matrix on the model
+        # device, so a batch's embeddings are a single matmul
+        R_flat = None
+        if getattr(self, "vectorize", False):
+            R_flat = torch.stack(
+                [torch.cat([t.flatten() for t in params]) for params in self.R],
+                dim=1,
+            ).to(device=self.model_device)
+
         # define a helper function that returns the embeddings for a batch
         def get_batch_embeddings(batch):
             # get gradient
@@ -744,6 +753,10 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             jacobians = _compute_jacobian_sample_wise_grads_per_batch(
                 self, features, labels, loss_fn, reduction_type, test
             )
+
+            if R_flat is not None:
+                jacobians_flat = torch.cat([j.flatten(1) for j in jacobians], dim=1)
+                return (jacobians_flat @ R_flat).to(device=return_device)
 
             # `jacobians`` contains the per-example parameters for a batch. this
             # function takes in `params`, a tuple of tensors representing a single
@@ -922,11 +935,9 @@ class ArnoldiInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             None
             if not show_progress
             else (
-                (
-                    f"Using {self.get_name()} to perform computation for "
-                    f'getting {"proponents" if proponents else "opponents"}. '
-                    "Processing training batches"
-                )
+                f"Using {self.get_name()} to perform computation for "
+                f"getting {'proponents' if proponents else 'opponents'}. "
+                "Processing training batches"
             )
         )
         return KMostInfluentialResults(
@@ -1035,6 +1046,11 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
     Args:
       r_cache_path (str, optional): file to save/load precomputed R
       prefer_load_R (bool): if True and cache exists, load R instead of recomputing
+      vectorize (bool): if True, compute per-example gradients with
+        `torch.func.vmap` instead of a per-example backward loop. Requires
+        `model` / `loss_fn` to be `torch.func`-compatible (see
+        `_compute_jacobian_wrt_params_vectorized`). Can be toggled on the
+        instance after construction; `R` does not depend on it.
     """
 
     def __init__(
@@ -1062,6 +1078,7 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         prefer_load_R: bool = True,
         trainset_gradients_cache_path: Optional[str] = None,
         prefer_precomputing_trainset_gradients: bool = False,
+        vectorize: bool = False,
     ):
         # Initialize the base class as usual
         # >>> Original ArnoldiInfluenceFunction.__init__ >>>
@@ -1100,6 +1117,7 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         self._prefer_precomputing_trainset_gradients = (
             prefer_precomputing_trainset_gradients
         )
+        self.vectorize = vectorize
 
         # Load R if desired and exists
         if (

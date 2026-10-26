@@ -20,6 +20,7 @@ from captum._utils.common import _get_module_from_name, parse_version
 from captum._utils.gradient import (
     _compute_jacobian_wrt_params,
     _compute_jacobian_wrt_params_with_sample_wise_trick,
+    _extract_parameters_from_layers,
 )
 from captum._utils.progress import progress
 
@@ -280,7 +281,6 @@ def _get_k_most_influential_helper(
         )
 
     for batch in influence_src_dataloader:
-
         # calculate tracin_scores for the batch
         batch_tracin_scores = influence_batch_fn(inputs, batch)
         batch_tracin_scores *= multiplier
@@ -582,7 +582,7 @@ def _flatten_params(_params: Tuple[Tensor, ...]) -> Tensor:
 
 
 def _unflatten_params_factory(
-    param_shapes: Union[List[Tuple[int, ...]], Tuple[Tensor, ...]]
+    param_shapes: Union[List[Tuple[int, ...]], Tuple[Tensor, ...]],
 ):
     """
     returns a function which is the inverse of `_flatten_params`
@@ -890,7 +890,7 @@ def _compute_jacobian_sample_wise_grads_per_batch(
     targets: Optional[Tensor] = None,
     loss_fn: Optional[Union[Module, Callable]] = None,
     reduction_type: Optional[str] = "none",
-    test: bool = False
+    test: bool = False,
 ) -> Tuple[Tensor, ...]:
     """
     `TracInCP`, `InfluenceFunction`, and `ArnoldiInfluenceFunction` all compute
@@ -907,6 +907,14 @@ def _compute_jacobian_sample_wise_grads_per_batch(
             reduction_type,
             influence_inst.layer_modules,
         )
+    if getattr(influence_inst, "vectorize", False):
+        return _compute_jacobian_wrt_params_vectorized(
+            influence_inst.model_test if test else influence_inst.model,
+            inputs,
+            targets,
+            loss_fn,
+            influence_inst.layer_modules,
+        )
     return _compute_jacobian_wrt_params(
         influence_inst.model_test if test else influence_inst.model,
         inputs,
@@ -914,6 +922,46 @@ def _compute_jacobian_sample_wise_grads_per_batch(
         loss_fn,
         influence_inst.layer_modules,
     )
+
+
+def _compute_jacobian_wrt_params_vectorized(
+    model: Module,
+    inputs: Tuple[Tensor, ...],
+    labels: Optional[Tensor] = None,
+    loss_fn: Optional[Union[Module, Callable]] = None,
+    layer_modules: Optional[List[Module]] = None,
+) -> Tuple[Tensor, ...]:
+    """
+    Same result as `_compute_jacobian_wrt_params`, but computes all per-example
+    gradients at once via `torch.func.vmap(torch.func.grad(...))` instead of one
+    backward pass per example. Each example is fed to `model` as a batch of size
+    1, so `model` and `loss_fn` must be `torch.func`-compatible: no
+    `torch.autograd.grad` / `.backward()` inside forward (use `torch.func.grad`
+    for input derivatives, e.g. PINN residuals) and no data-dependent control
+    flow. `inputs` must be tensors batched along dim 0.
+    """
+    params = tuple(
+        model.parameters()
+        if layer_modules is None
+        else _extract_parameters_from_layers(layer_modules)
+    )
+    param_names = _params_to_names(params, model)
+
+    def example_loss(params, example_inputs, example_label):
+        out = _functional_call(
+            model,
+            dict(zip(param_names, params)),
+            tuple(t.unsqueeze(0) for t in example_inputs),
+        )
+        if example_label is not None and loss_fn is not None:
+            out = loss_fn(out, example_label.unsqueeze(0))
+        return out.sum()
+
+    # detach so the returned jacobians don't keep an autograd graph alive
+    return torch.func.vmap(
+        torch.func.grad(example_loss),
+        in_dims=(None, 0, None if labels is None else 0),
+    )(tuple(p.detach() for p in params), tuple(t.detach() for t in inputs), labels)
 
 
 def _compute_batch_loss_influence_function_base(
