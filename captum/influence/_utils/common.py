@@ -839,12 +839,9 @@ def _parameter_dot(
     """
     returns the dot-product of 2 tensors, represented as tuple of tensors.
     """
-    return torch.tensor(
-        sum(
-            torch.sum(param_1 * param_2)
-            for (param_1, param_2) in zip(params_1, params_2)
-        )
-    )
+    return torch.stack(
+        [torch.sum(param_1 * param_2) for (param_1, param_2) in zip(params_1, params_2)]
+    ).sum()
 
 
 def _parameter_add(
