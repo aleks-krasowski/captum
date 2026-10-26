@@ -1,6 +1,6 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 import functools
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Literal, Optional, Tuple, Union
 
 import os
 import torch
@@ -1046,11 +1046,16 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
     Args:
       r_cache_path (str, optional): file to save/load precomputed R
       prefer_load_R (bool): if True and cache exists, load R instead of recomputing
-      vectorize (bool): if True, compute per-example gradients with
-        `torch.func.vmap` instead of a per-example backward loop. Requires
-        `model` / `loss_fn` to be `torch.func`-compatible (see
-        `_compute_jacobian_wrt_params_vectorized`). Can be toggled on the
-        instance after construction; `R` does not depend on it.
+      vectorize (str, optional): how per-example gradients are computed.
+        None: one backward pass per example. "vmap": via `torch.func.vmap`,
+        requires `model` / `loss_fn` to be `torch.func`-compatible (see
+        `_compute_jacobian_wrt_params_vectorized`). "batched_grad": normal
+        forward pass, then one `is_grads_batched` backward per
+        `vectorize_chunk_size` examples; works for any model that works with
+        None. Can be toggled on the instance after construction; `R` does not
+        depend on it.
+      vectorize_chunk_size (int): examples per batched backward for
+        "batched_grad". Memory grows with chunk size times `batch_size`.
     """
 
     def __init__(
@@ -1078,7 +1083,8 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
         prefer_load_R: bool = True,
         trainset_gradients_cache_path: Optional[str] = None,
         prefer_precomputing_trainset_gradients: bool = False,
-        vectorize: bool = False,
+        vectorize: Optional[Literal["vmap", "batched_grad"]] = None,
+        vectorize_chunk_size: int = 64,
     ):
         # Initialize the base class as usual
         # >>> Original ArnoldiInfluenceFunction.__init__ >>>
@@ -1118,6 +1124,7 @@ class ArnoldiInfluenceFunctionPrecomputed(ArnoldiInfluenceFunction):
             prefer_precomputing_trainset_gradients
         )
         self.vectorize = vectorize
+        self.vectorize_chunk_size = vectorize_chunk_size
 
         # Load R if desired and exists
         if (

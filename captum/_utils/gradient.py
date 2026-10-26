@@ -743,6 +743,7 @@ def _compute_jacobian_wrt_params(
     labels: Optional[Tensor] = None,
     loss_fn: Optional[Union[Module, Callable]] = None,
     layer_modules: Optional[List[Module]] = None,
+    chunk_size: Optional[int] = None,
 ) -> Tuple[Tensor, ...]:
     r"""
     Computes the Jacobian of a batch of test examples given a model, and optional
@@ -761,6 +762,10 @@ def _compute_jacobian_wrt_params(
                 but must behave as a library loss function would if `reduction='none'`.
         layer_modules (List[torch.nn.Module], optional): A list of PyTorch modules
                  w.r.t. which jacobian gradients are computed.
+        chunk_size (int, optional): If given, the per-example backward passes are
+                 batched via `is_grads_batched=True`, `chunk_size` examples per
+                 backward, instead of one backward per example. Same result, but
+                 memory grows with `chunk_size` times the batch size.
     Returns:
         grads (tuple[Tensor, ...]): Returns the Jacobian for the minibatch as a
                 tuple of gradients corresponding to the tuple of trainable parameters
@@ -797,6 +802,33 @@ def _compute_jacobian_wrt_params(
             for i in range(len(layer_parameters)):
                 if not layer_parameters[i].requires_grad:
                     layer_parameters[i].requires_grad = True
+
+        if chunk_size is not None:
+            # one-hot rows of `grad_outputs` select examples s..e-1, i.e. the same
+            # as `grad_outputs=torch.ones_like(out[i])` below, but vmapped
+            grads_list = []
+            for s in range(0, out.shape[0], chunk_size):
+                e = min(s + chunk_size, out.shape[0])
+                rows = torch.arange(e - s, device=out.device)
+                grad_outputs = torch.zeros(
+                    e - s, *out.shape, device=out.device, dtype=out.dtype
+                )
+                grad_outputs[rows, rows + s] = 1
+                grads = torch.autograd.grad(
+                    outputs=out,
+                    inputs=layer_parameters,
+                    grad_outputs=grad_outputs,
+                    retain_graph=True,
+                    is_grads_batched=True,
+                    allow_unused=True,
+                )
+                grads_list.append(
+                    [
+                        g if g is not None else p.new_zeros(e - s, *p.shape)
+                        for g, p in zip(grads, layer_parameters)
+                    ]
+                )
+            return tuple(torch.cat(x) for x in zip(*grads_list))
 
         grads_list = []
         for i in range(out.shape[0]):
