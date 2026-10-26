@@ -904,7 +904,9 @@ def _compute_jacobian_sample_wise_grads_per_batch(
             reduction_type,
             influence_inst.layer_modules,
         )
-    if getattr(influence_inst, "vectorize", False):
+    vectorize = getattr(influence_inst, "vectorize", None)
+    assert vectorize in (None, "vmap", "batched_grad"), vectorize
+    if vectorize == "vmap":
         return _compute_jacobian_wrt_params_vectorized(
             influence_inst.model_test if test else influence_inst.model,
             inputs,
@@ -918,6 +920,11 @@ def _compute_jacobian_sample_wise_grads_per_batch(
         targets,
         loss_fn,
         influence_inst.layer_modules,
+        chunk_size=(
+            getattr(influence_inst, "vectorize_chunk_size", 64)
+            if vectorize == "batched_grad"
+            else None
+        ),
     )
 
 
