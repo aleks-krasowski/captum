@@ -895,9 +895,14 @@ def _compute_jacobian_sample_wise_grads_per_batch(
     wraps that logic.
     """
 
+    model = (
+        getattr(influence_inst, "model_test", influence_inst.model)
+        if test
+        else influence_inst.model
+    )
     if influence_inst.sample_wise_grads_per_batch:
         return _compute_jacobian_wrt_params_with_sample_wise_trick(
-            influence_inst.model_test if test else influence_inst.model,
+            model,
             inputs,
             targets,
             loss_fn,
@@ -908,14 +913,14 @@ def _compute_jacobian_sample_wise_grads_per_batch(
     assert vectorize in (None, "vmap", "batched_grad"), vectorize
     if vectorize == "vmap":
         return _compute_jacobian_wrt_params_vectorized(
-            influence_inst.model_test if test else influence_inst.model,
+            model,
             inputs,
             targets,
             loss_fn,
             influence_inst.layer_modules,
         )
     return _compute_jacobian_wrt_params(
-        influence_inst.model_test if test else influence_inst.model,
+        model,
         inputs,
         targets,
         loss_fn,

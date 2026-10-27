@@ -727,6 +727,7 @@ class TracInCP(TracInCPBase):
         inputs: DataLoader,
         loss_fn: Optional[Union[Module, Callable]] = None,
         reduction_type: Optional[str] = None,
+        test: bool = False,
     ) -> Tuple[Tensor, ...]:
         """
         sums the jacobians of all examples in `inputs`. result is of the
@@ -742,6 +743,7 @@ class TracInCP(TracInCPBase):
                 inputs_batch[-1],
                 loss_fn,
                 reduction_type,
+                test,
             )
 
             return tuple(
@@ -768,6 +770,7 @@ class TracInCP(TracInCPBase):
         inputs: DataLoader,
         loss_fn: Optional[Union[Module, Callable]] = None,
         reduction_type: Optional[str] = None,
+        test: bool = False,
     ) -> Tuple[Tensor, ...]:
         all_inputs_batch_jacobians = [
             self._basic_computation_tracincp(
@@ -775,6 +778,7 @@ class TracInCP(TracInCPBase):
                 inputs_batch[-1],
                 loss_fn,
                 reduction_type,
+                test,
             )
             for inputs_batch in inputs
         ]
@@ -942,11 +946,15 @@ class TracInCP(TracInCPBase):
             self.checkpoints_load_func(self.model, checkpoint)
             if aggregate:
                 inputs_checkpoint_jacobians.append(
-                    self._sum_jacobians(inputs_dataset, loss_fn, self.reduction_type)
+                    self._sum_jacobians(
+                        inputs_dataset, loss_fn, self.reduction_type, test=True
+                    )
                 )
             else:
                 inputs_checkpoint_jacobians.append(
-                    self._concat_jacobians(inputs_dataset, loss_fn, self.reduction_type)
+                    self._concat_jacobians(
+                        inputs_dataset, loss_fn, self.reduction_type, test=True
+                    )
                 )
         return inputs_checkpoint_jacobians
 
@@ -1372,6 +1380,7 @@ class TracInCP(TracInCPBase):
         targets: Optional[Tensor] = None,
         loss_fn: Optional[Union[Module, Callable]] = None,
         reduction_type: Optional[str] = None,
+        test: bool = False,
     ) -> Tuple[Tensor, ...]:
         """
         For instances of TracInCP, computation of influence scores or self influence
@@ -1393,7 +1402,9 @@ class TracInCP(TracInCPBase):
             reduction_type (str, optional): The reduction type of `loss_fn`. This
                     argument is only used if `sample_wise_grads_per_batch` was true in
                     initialization.
+            test (bool, optional): If True, `self.model_test` (falls back to
+                    `self.model` if unset) is used instead of `self.model`.
         """
         return _compute_jacobian_sample_wise_grads_per_batch(
-            self, inputs, targets, loss_fn, reduction_type
+            self, inputs, targets, loss_fn, reduction_type, test
         )
