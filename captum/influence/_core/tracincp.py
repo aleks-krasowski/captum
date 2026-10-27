@@ -4,7 +4,17 @@ import glob
 import warnings
 from abc import abstractmethod
 from os.path import join
-from typing import Any, Callable, Iterator, List, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+)
 
 import torch
 from captum._utils.av import AV
@@ -442,6 +452,8 @@ class TracInCP(TracInCPBase):
         batch_size: Union[int, None] = 1,
         test_loss_fn: Optional[Union[Module, Callable]] = None,
         sample_wise_grads_per_batch: bool = False,
+        vectorize: Optional[Literal["vmap", "batched_grad"]] = None,
+        vectorize_chunk_size: int = 64,
     ) -> None:
         r"""
         Args:
@@ -549,6 +561,18 @@ class TracInCP(TracInCPBase):
                     do not enable this implementation if gradients will be computed
                     for other kinds of layers.
                     Default: False
+            vectorize (str, optional): how per-example gradients are computed when
+                    `sample_wise_grads_per_batch` is False. None: one backward pass
+                    per example. "vmap": via `torch.func.vmap`, requires `model` /
+                    `loss_fn` to be `torch.func`-compatible. "batched_grad": one
+                    `is_grads_batched` backward per `vectorize_chunk_size` examples;
+                    works for any model that works with None. Same semantics as in
+                    `ArnoldiInfluenceFunctionPrecomputed`.
+                    Default: None
+            vectorize_chunk_size (int, optional): examples per batched backward
+                    for "batched_grad". Memory grows with chunk size times
+                    `batch_size`.
+                    Default: 64
         """
 
         TracInCPBase.__init__(
@@ -563,6 +587,8 @@ class TracInCP(TracInCPBase):
         )
 
         self.sample_wise_grads_per_batch = sample_wise_grads_per_batch
+        self.vectorize = vectorize
+        self.vectorize_chunk_size = vectorize_chunk_size
 
         # check `loss_fn`
         self.reduction_type = _check_loss_fn(
