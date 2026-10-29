@@ -1,0 +1,1078 @@
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta http-equiv="X-UA-Compatible" content="IE=edge"/><title>Captum · Model Interpretability for PyTorch</title><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="generator" content="Docusaurus"/><meta name="description" content="Model Interpretability for PyTorch"/><meta name="docsearch:language" content="en"/><meta property="og:title" content="Captum · Model Interpretability for PyTorch"/><meta property="og:type" content="website"/><meta property="og:url" content="https://captum.ai/"/><meta property="og:description" content="Model Interpretability for PyTorch"/><meta property="og:image" content="https://captum.ai/img/captum-icon.png"/><meta name="twitter:card" content="summary"/><meta name="twitter:image" content="https://captum.ai/img/captum.png"/><link rel="shortcut icon" href="/img/captum.ico"/><link rel="stylesheet" href="https://cdn.jsdelivr.net/docsearch.js/1/docsearch.min.css"/><link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/default.min.css"/><script>
+              (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+              (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+              m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+              })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+              ga('create', 'UA-44373548-48', 'auto');
+              ga('send', 'pageview');
+            </script><script type="text/javascript" src="https://buttons.github.io/buttons.js"></script><script type="text/javascript" src="/js/code_block_buttons.js"></script><script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js"></script><script src="https://unpkg.com/vanilla-back-to-top@7.1.14/dist/vanilla-back-to-top.min.js"></script><script>
+        document.addEventListener('DOMContentLoaded', function() {
+          addBackToTop(
+            {"zIndex":100}
+          )
+        });
+        </script><script src="/js/scrollSpy.js"></script><link rel="stylesheet" href="/css/main.css"/><script src="/js/codetabs.js"></script></head><body><div class="fixedHeaderContainer"><div class="headerWrapper wrapper"><header><a href="/"><img class="logo" src="/img/captum_logo.svg" alt="Captum"/></a><div class="navigationWrapper navigationSlider"><nav class="slidingNav"><ul class="nav-site nav-site-internal"><li class=""><a href="/docs/introduction" target="_self">Docs</a></li><li class=""><a href="/tutorials/" target="_self">Tutorials</a></li><li class=""><a href="/api/" target="_self">API Reference</a></li><li class=""><a href="https://github.com/pytorch/captum" target="_self">GitHub</a></li><li class="navSearchWrapper reactNavSearchWrapper"><input type="text" id="search_input_react" placeholder="Search" title="Search"/></li></ul></nav></div></header></div></div><div class="navPusher"><div>
+<script type="text/javascript" id="documentation_options" data-url_root="./"
+src="/_sphinx/documentation_options.js"></script>
+<script type="text/javascript" src="/_sphinx/jquery.js"></script>
+<script type="text/javascript" src="/_sphinx/underscore.js"></script>
+<script type="text/javascript" src="/_sphinx/doctools.js"></script>
+<script type="text/javascript" src="/_sphinx/language_data.js"></script>
+<script type="text/javascript" src="/_sphinx/searchtools.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/contrib/auto-render.min.js"></script>
+<script src="/_sphinx/katex_autorenderer.js"></script>
+<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/katex.min.css" />
+<div class="sphinx wrapper"><div class="document">
+<div class="documentwrapper">
+<div class="bodywrapper">
+<div class="body" role="main">
+<h1>Source code for captum.attr._utils.interpretable_input</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright (c) Meta Platforms, Inc. and affiliates.</span>
+<span class="c1">#</span>
+<span class="c1"># This source code is licensed under the BSD-style license found in the</span>
+<span class="c1"># LICENSE file in the root directory of this source tree.</span>
+
+<span class="c1"># pyre-strict</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Any</span><span class="p">,</span>
+    <span class="n">Callable</span><span class="p">,</span>
+    <span class="n">cast</span><span class="p">,</span>
+    <span class="n">Dict</span><span class="p">,</span>
+    <span class="n">List</span><span class="p">,</span>
+    <span class="n">Optional</span><span class="p">,</span>
+    <span class="n">Tuple</span><span class="p">,</span>
+    <span class="n">TYPE_CHECKING</span><span class="p">,</span>
+    <span class="n">Union</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">PIL.Image</span>
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">from</span> <span class="nn">captum._utils.typing</span> <span class="kn">import</span> <span class="n">TokenizerLike</span>
+<span class="kn">from</span> <span class="nn">captum.attr._utils.visualization</span> <span class="kn">import</span> <span class="n">draw_mask_border</span><span class="p">,</span> <span class="n">draw_mask_legend</span>
+<span class="kn">from</span> <span class="nn">torch</span> <span class="kn">import</span> <span class="n">Tensor</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">matplotlib.pyplot</span> <span class="kn">import</span> <span class="n">Axes</span><span class="p">,</span> <span class="n">Figure</span>
+
+
+<span class="k">def</span> <span class="nf">_scatter_itp_attr_by_mask</span><span class="p">(</span>
+    <span class="n">itp_attr</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">input_shape</span><span class="p">:</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Scatter the attribution of the interpretable features to the model input shape</span>
+<span class="sd">    by mask, if the interpretable features are the mask groups of the raw</span>
+<span class="sd">    input elements,</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># itp_attr in shape(*output_dims, n_itp_features)</span>
+    <span class="n">output_dims</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">n_itp_features</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># input_shape in shape(batch_size, *inp_feature_dims)</span>
+    <span class="c1"># attribute in shape(*output_dims, *inp_feature_dims)</span>
+    <span class="c1"># Current limitation in pyre with multiple variadic tuples</span>
+    <span class="n">attr_shape</span> <span class="o">=</span> <span class="p">(</span><span class="o">*</span><span class="n">output_dims</span><span class="p">,</span> <span class="o">*</span><span class="n">input_shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>  <span class="c1"># pyre-ignore[60]</span>
+
+    <span class="n">expanded_feature_indices</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">attr_shape</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">input_shape</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="c1"># exclude batch_size &amp; last of actual value</span>
+        <span class="n">extra_inp_dims</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">input_shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+
+        <span class="c1"># unsqueeze itp_attr to have same number of dims as input</span>
+        <span class="c1"># (*output_dims, 1..., 1, n_itp_features)</span>
+        <span class="c1"># then broadcast to (*output_dims, *inp.shape[1:-1], n_itp_features)</span>
+        <span class="n">n_extra_dims</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">extra_inp_dims</span><span class="p">)</span>
+        <span class="c1"># Current limitation in pyre with multiple variadic tuples</span>
+        <span class="n">unsqueezed_shape</span> <span class="o">=</span> <span class="p">(</span>  <span class="c1"># pyre-ignore[60]</span>
+            <span class="o">*</span><span class="n">output_dims</span><span class="p">,</span>
+            <span class="o">*</span><span class="p">(</span><span class="mi">1</span><span class="p">,)</span> <span class="o">*</span> <span class="n">n_extra_dims</span><span class="p">,</span>
+            <span class="n">n_itp_features</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">expanded_shape</span> <span class="o">=</span> <span class="p">(</span>  <span class="c1"># pyre-ignore[60]</span>
+            <span class="o">*</span><span class="n">output_dims</span><span class="p">,</span>
+            <span class="o">*</span><span class="n">extra_inp_dims</span><span class="p">,</span>
+            <span class="n">n_itp_features</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">expanded_itp_attr</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">unsqueezed_shape</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">expanded_shape</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">expanded_itp_attr</span> <span class="o">=</span> <span class="n">itp_attr</span>
+
+    <span class="c1"># gather index must be long</span>
+    <span class="c1"># may support int32 soon https://github.com/pytorch/pytorch/pull/151822</span>
+    <span class="k">if</span> <span class="n">expanded_feature_indices</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">:</span>
+        <span class="n">expanded_feature_indices</span> <span class="o">=</span> <span class="n">expanded_feature_indices</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+
+    <span class="c1"># gather from (*output_dims, *inp.shape[1:-1], n_itp_features)</span>
+    <span class="n">attr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">expanded_itp_attr</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">expanded_feature_indices</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">attr</span>
+
+
+<div class="viewcode-block" id="InterpretableInput">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.InterpretableInput">[docs]</a>
+<span class="k">class</span> <span class="nc">InterpretableInput</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    InterpretableInput is an adapter for different kinds of model inputs to</span>
+<span class="sd">    work in Captum's attribution methods. Generally, attribution methods of Captum</span>
+<span class="sd">    assume the inputs are numerical PyTorch tensors whose 1st dimension must be batch</span>
+<span class="sd">    size and each index in the rest of dimensions is an interpretable feature. But this</span>
+<span class="sd">    is not always true in practice. First, the model may take inputs of formats other</span>
+<span class="sd">    than tensor that also require attributions. For example, a model with encapsulated</span>
+<span class="sd">    tokenizer can directly take string as input. Second, what is considered as</span>
+<span class="sd">    an interpretable feature always depends on the actual application and the user's</span>
+<span class="sd">    desire. For example, the interpretable feature of an image tensor can either be</span>
+<span class="sd">    each pixel or some segments. For text, users may see the entire string as one</span>
+<span class="sd">    interpretable feature or view each word as one interpretable feature. This class</span>
+<span class="sd">    provides a place to define what is the actual model input and the corresponding</span>
+<span class="sd">    interpretable format for attribution, and the transformation between them.</span>
+<span class="sd">    It serves as a common interface to be used inthe attribution methods to make</span>
+<span class="sd">    Captum understand how to perturb various inputs.</span>
+
+<span class="sd">    The concept Interpretable Input mainly comes from the following two papers:</span>
+
+<span class="sd">    `"Why Should I Trust You?": Explaining the Predictions of Any Classifier</span>
+<span class="sd">    &lt;https://arxiv.org/abs/1602.04938&gt;`_</span>
+
+<span class="sd">    `A Unified Approach to Interpreting Model Predictions</span>
+<span class="sd">    &lt;https://arxiv.org/abs/1705.07874&gt;`_</span>
+
+<span class="sd">    which is also referred to as interpretable representation or simplified</span>
+<span class="sd">    input. It can be represented as a mapping function:</span>
+
+<span class="sd">    .. math::</span>
+<span class="sd">        x = h_x(x')</span>
+
+<span class="sd">    where :math:`x` is the model input, which can be anything that the model consumes;</span>
+<span class="sd">    :math:`x'` is the interpretable input used in the attribution algorithms</span>
+<span class="sd">    (it must be a PyTorch tensor in Captum), which is often</span>
+<span class="sd">    binary indicating the “presence” or “absence”; :math:`h_x` is the</span>
+<span class="sd">    transformer. It is supposed to work with perturbation-based attribution methods,</span>
+<span class="sd">    but if :math:`h_x` is differentiable, it may also be used</span>
+<span class="sd">    in gradient-based methods.</span>
+
+<span class="sd">    InterpretableInput is the abstract class defining the interface. Captum provides</span>
+<span class="sd">    the child implementations for some common input formats,</span>
+<span class="sd">    like text and sparse features. Users can inherit this</span>
+<span class="sd">    class to create other types of customized input.</span>
+
+<span class="sd">    (We expect to support InterpretableInput in all attribution methods, but it</span>
+<span class="sd">    is only allowed in certain attribution classes like LLMAttribution for now.)</span>
+<span class="sd">    """</span>
+
+    <span class="n">n_itp_features</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+<div class="viewcode-block" id="InterpretableInput.to_tensor">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.InterpretableInput.to_tensor">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">to_tensor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Return the interpretable representation of this input as a tensor</span>
+
+<span class="sd">        Returns:</span>
+
+<span class="sd">            itp_tensor (Tensor): interpretable tensor</span>
+<span class="sd">        """</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="InterpretableInput.to_model_input">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.InterpretableInput.to_model_input">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">to_model_input</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">perturbed_tensor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Get the (perturbed) input in the format required by the model</span>
+<span class="sd">        based on the given (perturbed) interpretable representation.</span>
+
+<span class="sd">        Args:</span>
+
+<span class="sd">            perturbed_tensor (Tensor, optional): tensor of the interpretable</span>
+<span class="sd">                    representation of this input. If it is None, assume the</span>
+<span class="sd">                    interpretable representation is pristine and return the</span>
+<span class="sd">                    original model input</span>
+<span class="sd">                    Default: None.</span>
+
+
+<span class="sd">        Returns:</span>
+
+<span class="sd">            model_input (Any): model input passed to the forward function</span>
+<span class="sd">        """</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="InterpretableInput.format_attr">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.InterpretableInput.format_attr">[docs]</a>
+    <span class="k">def</span> <span class="nf">format_attr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">itp_attr</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Format the attribution of the interpretable feature if needed.</span>
+<span class="sd">        The way of formatting depends on the specific interpretable input type.</span>
+<span class="sd">        A common use is if the interpretable features are the mask groups of the raw</span>
+<span class="sd">        input elements, the attribution of the interpretable features can be scattered</span>
+<span class="sd">        back to the model input shape.</span>
+
+<span class="sd">        Args:</span>
+
+<span class="sd">                itp_attr (Tensor): attributions of the interpretable features</span>
+
+<span class="sd">        Returns:</span>
+
+<span class="sd">                attr (Tensor): formatted attribution</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="n">itp_attr</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="TextTemplateInput">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTemplateInput">[docs]</a>
+<span class="k">class</span> <span class="nc">TextTemplateInput</span><span class="p">(</span><span class="n">InterpretableInput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    TextTemplateInput is an implementation of InterpretableInput for text inputs, whose</span>
+<span class="sd">    interpretable features are certain segments (e.g., words, phrases) of the text.</span>
+<span class="sd">    It takes a template string (or function) to define the feature segmentats</span>
+<span class="sd">    of the input text. Its input format to the model will be the completed text,</span>
+<span class="sd">    while its interpretable representation will be a binary tensor of the number of</span>
+<span class="sd">    the segment features whose values indicates if the feature is</span>
+<span class="sd">    “presence” or “absence”.</span>
+
+<span class="sd">    Args:</span>
+
+<span class="sd">        template (str or Callable): template string or function that takes</span>
+<span class="sd">                the text segments and format them into the text input for the model</span>
+<span class="sd">        values (List[str] or Dict[str, str]): the values of the segments. it is</span>
+<span class="sd">                the input to the template.</span>
+<span class="sd">        baselines (List[str] or Dict[str, str] or Callable or None, optional): the</span>
+<span class="sd">                baseline values for the segment features. If it is None, emptry string</span>
+<span class="sd">                will be used as the baseline.</span>
+<span class="sd">                Default: None</span>
+<span class="sd">        mask (List[int] or Dict[str, int] or None, optional): the mask to group the</span>
+<span class="sd">                segment features. It must be in the same format as the values</span>
+<span class="sd">                and assign each segment a mask index. Segments with the same</span>
+<span class="sd">                index will be seen as a single interpretable feature, which means</span>
+<span class="sd">                they must be perturbed together and end with same attributions.</span>
+<span class="sd">                Default: None</span>
+
+<span class="sd">    Examples::</span>
+
+<span class="sd">        &gt;&gt;&gt; text_inp = TextTemplateInput(</span>
+<span class="sd">        &gt;&gt;&gt;     template="{} feels {} right now",</span>
+<span class="sd">        &gt;&gt;&gt;     values=["He", "depressed"],</span>
+<span class="sd">        &gt;&gt;&gt;     baselines=["It", "neutral"],</span>
+<span class="sd">        &gt;&gt;&gt; )</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; text_inp.to_tensor()</span>
+<span class="sd">        &gt;&gt;&gt; # torch.tensor([[1, 1]])</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; text_inp.to_model_input(torch.tensor([[0, 1]]))</span>
+<span class="sd">        &gt;&gt;&gt; # "It feels depressed right now"</span>
+
+<span class="sd">    """</span>
+
+    <span class="n">values</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">dict_keys</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">baselines</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]]]</span>
+    <span class="n">n_features</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">n_itp_features</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">format_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">formatted_mask</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">template</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span>
+        <span class="n">values</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span>
+        <span class="n">baselines</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span>
+            <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+            <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+            <span class="n">Callable</span><span class="p">[[],</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]],</span>
+            <span class="kc">None</span><span class="p">,</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">mask</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># convert values dict to list</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="n">dict_keys</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">values</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+            <span class="n">values</span> <span class="o">=</span> <span class="p">[</span><span class="n">values</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">dict_keys</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span>
+                <span class="n">values</span><span class="p">,</span> <span class="nb">list</span>
+            <span class="p">),</span> <span class="sa">f</span><span class="s2">"the values must be either a list or a dict, received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">values</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+            <span class="n">dict_keys</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">values</span> <span class="o">=</span> <span class="n">values</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span> <span class="o">=</span> <span class="n">dict_keys</span>
+
+        <span class="n">n_features</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">baselines</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># default baseline is to remove the element</span>
+            <span class="n">baselines</span> <span class="o">=</span> <span class="p">[</span><span class="s2">""</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="ow">not</span> <span class="nb">callable</span><span class="p">(</span><span class="n">baselines</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">dict_keys</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">baselines</span><span class="p">,</span> <span class="nb">dict</span><span class="p">),</span> <span class="p">(</span>
+                    <span class="s2">"if values is a dict, the baselines must also be a dict "</span>
+                    <span class="s2">"or a callable which return a dict, "</span>
+                    <span class="sa">f</span><span class="s2">"received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">baselines</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+                <span class="p">)</span>
+
+                <span class="c1"># convert dict to list</span>
+                <span class="n">baselines</span> <span class="o">=</span> <span class="p">[</span><span class="n">baselines</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">dict_keys</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">baselines</span><span class="p">,</span> <span class="nb">list</span><span class="p">),</span> <span class="p">(</span>
+                    <span class="s2">"if values is a list, the baselines must also be a list "</span>
+                    <span class="s2">"or a callable which return a list, "</span>
+                    <span class="sa">f</span><span class="s2">"received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">baselines</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+                <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">baselines</span> <span class="o">=</span> <span class="n">baselines</span>
+
+        <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">n_itp_features</span> <span class="o">=</span> <span class="n">n_features</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="nb">dict</span><span class="p">),</span> <span class="p">(</span>
+                    <span class="s2">"if values is dict, the mask must also be a dict, "</span>
+                    <span class="sa">f</span><span class="s2">"received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+                <span class="p">)</span>
+
+                <span class="c1"># convert dict to list</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="p">[</span><span class="n">mask</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span><span class="p">]</span>
+
+            <span class="n">mask_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span>
+            <span class="n">mask_id_to_idx</span> <span class="o">=</span> <span class="p">{</span><span class="n">mid</span><span class="p">:</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">mid</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">mask_ids</span><span class="p">)}</span>
+
+            <span class="c1"># internal compressed mask of continuous interpretable indices from 0</span>
+            <span class="c1"># cannot replace original mask of ids for grouping across values externally</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">formatted_mask</span> <span class="o">=</span> <span class="p">[</span><span class="n">mask_id_to_idx</span><span class="p">[</span><span class="n">mid</span><span class="p">]</span> <span class="k">for</span> <span class="n">mid</span> <span class="ow">in</span> <span class="n">mask</span><span class="p">]</span>
+
+            <span class="n">n_itp_features</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">mask_ids</span><span class="p">)</span>
+
+        <span class="c1"># number of raw features and intepretable features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_features</span> <span class="o">=</span> <span class="n">n_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_itp_features</span> <span class="o">=</span> <span class="n">n_itp_features</span>
+
+        <span class="c1"># preserve template before modification</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">template</span> <span class="o">=</span> <span class="n">template</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">template</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="n">template</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">format</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="nb">callable</span><span class="p">(</span><span class="n">template</span><span class="p">),</span> <span class="p">(</span>
+                <span class="s2">"the template must be either a string or a callable, "</span>
+                <span class="sa">f</span><span class="s2">"received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">template</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+            <span class="n">template</span> <span class="o">=</span> <span class="n">template</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">format_fn</span> <span class="o">=</span> <span class="n">template</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">=</span> <span class="n">mask</span>
+
+<div class="viewcode-block" id="TextTemplateInput.to_tensor">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTemplateInput.to_tensor">[docs]</a>
+    <span class="k">def</span> <span class="nf">to_tensor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Interpretable representation in shape(1, n_itp_features)</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mf">1.0</span><span class="p">]</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_itp_features</span><span class="p">])</span></div>
+
+
+<div class="viewcode-block" id="TextTemplateInput.to_model_input">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTemplateInput.to_model_input">[docs]</a>
+    <span class="k">def</span> <span class="nf">to_model_input</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">perturbed_tensor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>  <span class="c1"># clone</span>
+
+        <span class="k">if</span> <span class="n">perturbed_tensor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">baselines</span><span class="p">):</span>
+                <span class="c1"># a placeholder for advanced baselines</span>
+                <span class="c1"># TODO: support callable baselines</span>
+                <span class="n">baselines</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">baselines</span><span class="p">()</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span><span class="p">:</span>
+                    <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">baselines</span><span class="p">,</span> <span class="nb">dict</span><span class="p">),</span> <span class="p">(</span>
+                        <span class="s2">"if values is a dict and the baselines is a callable"</span>
+                        <span class="sa">f</span><span class="s2">"it must return a dict, received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">baselines</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+                    <span class="p">)</span>
+                    <span class="n">baselines</span> <span class="o">=</span> <span class="p">[</span><span class="n">baselines</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span><span class="p">]</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">baselines</span><span class="p">,</span> <span class="nb">list</span><span class="p">),</span> <span class="p">(</span>
+                        <span class="s2">"if values is a list and the baselines is a callable"</span>
+                        <span class="sa">f</span><span class="s2">"it must return a list, received: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">baselines</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+                    <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">baselines</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">baselines</span>
+
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)):</span>
+                <span class="n">itp_idx</span> <span class="o">=</span> <span class="n">i</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask</span><span class="p">:</span>
+                    <span class="n">itp_idx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatted_mask</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+                <span class="n">itp_val</span> <span class="o">=</span> <span class="n">perturbed_tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">itp_idx</span><span class="p">]</span>
+
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">itp_val</span><span class="p">:</span>
+                    <span class="n">values</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">baselines</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span><span class="p">:</span>
+            <span class="n">dict_values</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dict_keys</span><span class="p">,</span> <span class="n">values</span><span class="p">))</span>
+            <span class="n">input_str</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">format_fn</span><span class="p">(</span><span class="o">**</span><span class="n">dict_values</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">input_str</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">format_fn</span><span class="p">(</span><span class="o">*</span><span class="n">values</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">input_str</span></div>
+
+
+<div class="viewcode-block" id="TextTemplateInput.format_attr">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTemplateInput.format_attr">[docs]</a>
+    <span class="k">def</span> <span class="nf">format_attr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">itp_attr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">itp_attr</span>
+
+        <span class="n">device</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="o">.</span><span class="n">device</span>
+
+        <span class="n">formatted_attr</span> <span class="o">=</span> <span class="n">_scatter_itp_attr_by_mask</span><span class="p">(</span>
+            <span class="n">itp_attr</span><span class="p">,</span>  <span class="c1"># shape(*output_dims, n_itp_features)</span>
+            <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_features</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">formatted_mask</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">formatted_attr</span></div>
+</div>
+
+
+
+<span class="k">class</span> <span class="nc">TextSegmentInput</span><span class="p">(</span><span class="n">TextTemplateInput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    TextSegmentInput is an implementation of InterpretableInput that automatically</span>
+<span class="sd">    segments a text string into interpretable features based on a segmentation level.</span>
+<span class="sd">    It builds on TextTemplateInput by auto-generating the template and values from</span>
+<span class="sd">    the raw text, so users don't need to manually define them.</span>
+
+<span class="sd">    Supported segmentation levels:</span>
+
+<span class="sd">    - ``"word"``: split on whitespace and common punctuation</span>
+<span class="sd">      (``. , ! ? ; : ' " - ( ) [ ] { }``). Punctuation stays in the template.</span>
+<span class="sd">    - ``"sentence"``: split after sentence-ending punctuation (``.``, ``!``, ``?``)</span>
+<span class="sd">      or on newlines</span>
+<span class="sd">    - ``"line"``: split on newlines</span>
+<span class="sd">    - ``"paragraph"``: split on blank lines (one or more empty lines)</span>
+
+<span class="sd">    Args:</span>
+
+<span class="sd">        text (str): the raw text to segment</span>
+<span class="sd">        level (str, optional): the segmentation level.</span>
+<span class="sd">                Default: "word"</span>
+<span class="sd">        baselines (str or None, optional): the baseline value for each segment</span>
+<span class="sd">                when it is "absent". If None, the segment is removed (empty string).</span>
+<span class="sd">                If a string, it is used as the baseline for all segments.</span>
+<span class="sd">                Default: None</span>
+<span class="sd">        group_size (int, optional): group every ``group_size`` consecutive</span>
+<span class="sd">                segments into one interpretable feature. Segments in the same</span>
+<span class="sd">                group are perturbed together and share the same attribution.</span>
+<span class="sd">                The last group may contain fewer segments.</span>
+<span class="sd">                Default: 1 (each segment is its own feature)</span>
+
+<span class="sd">    Examples::</span>
+
+<span class="sd">        &gt;&gt;&gt; seg_inp = TextSegmentInput(</span>
+<span class="sd">        &gt;&gt;&gt;     "Hello, world. Welcome!",</span>
+<span class="sd">        &gt;&gt;&gt;     level="word",</span>
+<span class="sd">        &gt;&gt;&gt; )</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; seg_inp.values</span>
+<span class="sd">        &gt;&gt;&gt; # ["Hello", "world", "Welcome"]</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; seg_inp.to_model_input()</span>
+<span class="sd">        &gt;&gt;&gt; # "Hello, world. Welcome!"</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; seg_inp.to_model_input(torch.tensor([[1, 0, 1]]))</span>
+<span class="sd">        &gt;&gt;&gt; # "Hello, . Welcome!"</span>
+
+<span class="sd">        &gt;&gt;&gt; seg_inp = TextSegmentInput(</span>
+<span class="sd">        &gt;&gt;&gt;     "one two three four five six",</span>
+<span class="sd">        &gt;&gt;&gt;     level="word",</span>
+<span class="sd">        &gt;&gt;&gt;     group_size=2,</span>
+<span class="sd">        &gt;&gt;&gt; )</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; seg_inp.n_itp_features</span>
+<span class="sd">        &gt;&gt;&gt; # 3</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; seg_inp.to_model_input(torch.tensor([[1, 0, 1]]))</span>
+<span class="sd">        &gt;&gt;&gt; # "one two   five six"</span>
+
+<span class="sd">    """</span>
+
+    <span class="n">SPLIT_PATTERNS</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"word"</span><span class="p">:</span> <span class="sa">r</span><span class="s2">"([\s.,!?;:'</span><span class="se">\"</span><span class="s2">\-()\[\]</span><span class="si">{}</span><span class="s2">]+)"</span><span class="p">,</span>
+        <span class="s2">"sentence"</span><span class="p">:</span> <span class="sa">r</span><span class="s2">"((?&lt;=[.!?])\s+|\n+)"</span><span class="p">,</span>
+        <span class="s2">"line"</span><span class="p">:</span> <span class="sa">r</span><span class="s2">"(\n)"</span><span class="p">,</span>
+        <span class="s2">"paragraph"</span><span class="p">:</span> <span class="sa">r</span><span class="s2">"(\n\s*\n)"</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">level</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"word"</span><span class="p">,</span>
+        <span class="n">baselines</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">group_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">segments</span><span class="p">,</span> <span class="n">template</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_segment_text</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">level</span><span class="p">)</span>
+
+        <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"text must contain at least one segment"</span>
+        <span class="k">assert</span> <span class="n">group_size</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"group_size must be a positive integer"</span>
+
+        <span class="n">baseline_list</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">baselines</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">baseline_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">baselines</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">)</span>
+
+        <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">group_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="o">//</span> <span class="n">group_size</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">))]</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">template</span><span class="o">=</span><span class="n">template</span><span class="p">,</span>
+            <span class="n">values</span><span class="o">=</span><span class="n">segments</span><span class="p">,</span>
+            <span class="n">baselines</span><span class="o">=</span><span class="n">baseline_list</span><span class="p">,</span>
+            <span class="n">mask</span><span class="o">=</span><span class="n">mask</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">text</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">=</span> <span class="n">level</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">group_size</span> <span class="o">=</span> <span class="n">group_size</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_segment_text</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">level</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Segment text by the given level and return (segments, template).</span>
+
+<span class="sd">        Uses ``re.split`` with a capture group so delimiters are preserved.</span>
+<span class="sd">        Segments become values and delimiters become literal parts of the</span>
+<span class="sd">        template string with ``{}`` placeholders where segments were.</span>
+<span class="sd">        """</span>
+        <span class="k">assert</span> <span class="n">level</span> <span class="ow">in</span> <span class="n">TextSegmentInput</span><span class="o">.</span><span class="n">SPLIT_PATTERNS</span><span class="p">,</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"unsupported segmentation level: </span><span class="si">{</span><span class="n">level</span><span class="si">}</span><span class="s2">, "</span>
+            <span class="sa">f</span><span class="s2">"must be one of </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">TextSegmentInput</span><span class="o">.</span><span class="n">SPLIT_PATTERNS</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+
+        <span class="n">pattern</span> <span class="o">=</span> <span class="n">TextSegmentInput</span><span class="o">.</span><span class="n">SPLIT_PATTERNS</span><span class="p">[</span><span class="n">level</span><span class="p">]</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+
+        <span class="n">segments</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">template_parts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">escape_braces</span> <span class="o">=</span> <span class="n">TextSegmentInput</span><span class="o">.</span><span class="n">_escape_braces</span>
+
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">part</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">parts</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="c1"># segment position</span>
+                <span class="k">if</span> <span class="n">part</span><span class="p">:</span>
+                    <span class="n">segments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">part</span><span class="p">)</span>
+                    <span class="n">template_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"</span><span class="si">{}</span><span class="s2">"</span><span class="p">)</span>
+                <span class="c1"># empty segment: skip (no placeholder)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># delimiter position: always goes into the template</span>
+                <span class="n">template_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">escape_braces</span><span class="p">(</span><span class="n">part</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">segments</span><span class="p">,</span> <span class="s2">""</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">template_parts</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_escape_braces</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">s</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">"{"</span><span class="p">,</span> <span class="s2">"{{"</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">"}"</span><span class="p">,</span> <span class="s2">"}}"</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="TextTokenInput">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTokenInput">[docs]</a>
+<span class="k">class</span> <span class="nc">TextTokenInput</span><span class="p">(</span><span class="n">InterpretableInput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    TextTokenInput is an implementation of InterpretableInput for text inputs, whose</span>
+<span class="sd">    interpretable features are the tokens of the text with respect to a given tokenizer.</span>
+<span class="sd">    It is initiated with the string form of the input text and the corresponding</span>
+<span class="sd">    tokenizer. Its input format to the model will be the tokenized id tensor,</span>
+<span class="sd">    while its interpretable representation will be a binary tensor of the tokens</span>
+<span class="sd">    whose values indicates if the token is “presence” or “absence”.</span>
+
+<span class="sd">    Args:</span>
+
+<span class="sd">        text (str): text string for the model</span>
+<span class="sd">        tokenizer (Tokenizer): tokenizer of the language model</span>
+<span class="sd">        baselines (int or str, optional): the</span>
+<span class="sd">                baseline value for the tokens. It can be a string of the baseline token</span>
+<span class="sd">                or an integer of the baseline token id. Common choices include unknown</span>
+<span class="sd">                token or padding token. The default value is 0, which</span>
+<span class="sd">                is commonly used for unknown token.</span>
+<span class="sd">                Default: 0</span>
+<span class="sd">        skip_tokens (List[int] or List[str], optional): the tokens to skip in the</span>
+<span class="sd">                the input's interpretable representation. Use this argument to define</span>
+<span class="sd">                uninterested tokens, commonly like special tokens, e.g., sos, and unk.</span>
+<span class="sd">                It can be a list of strings of the tokens or a list of integers of the</span>
+<span class="sd">                token ids.</span>
+<span class="sd">                Default: None</span>
+
+<span class="sd">    Examples::</span>
+
+<span class="sd">        &gt;&gt;&gt; text_inp = TextTokenInput("This is a test.", tokenizer)</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; text_inp.to_tensor()</span>
+<span class="sd">        &gt;&gt;&gt; # the shape dependens on the tokenizer</span>
+<span class="sd">        &gt;&gt;&gt; # assuming it is broken into ["&lt;s&gt;", "This", "is", "a", "test", "."],</span>
+<span class="sd">        &gt;&gt;&gt; # torch.tensor([[1, 6]])</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; text_inp.to_model_input(torch.tensor([[0, 1]]))</span>
+<span class="sd">        &gt;&gt;&gt; # torch.tensor([[1, 6]])</span>
+
+<span class="sd">    """</span>
+
+    <span class="n">inp_tensor</span><span class="p">:</span> <span class="n">Tensor</span>
+    <span class="n">itp_tensor</span><span class="p">:</span> <span class="n">Tensor</span>
+    <span class="n">itp_mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">tokenizer</span><span class="p">:</span> <span class="n">TokenizerLike</span>
+    <span class="n">n_itp_features</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">baselines</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="p">:</span> <span class="n">TokenizerLike</span><span class="p">,</span>
+        <span class="n">baselines</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>  <span class="c1"># usually UNK</span>
+        <span class="n">skip_tokens</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">inp_tensor</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">"pt"</span><span class="p">)</span>
+
+        <span class="c1"># input tensor into the model of token ids</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">inp_tensor</span> <span class="o">=</span> <span class="n">inp_tensor</span>
+        <span class="c1"># tensor of interpretable token ids</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">itp_tensor</span> <span class="o">=</span> <span class="n">inp_tensor</span>
+        <span class="c1"># interpretable mask</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">itp_mask</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">skip_tokens</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">skip_tokens</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">skip_tokens</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">skip_tokens</span><span class="p">)</span>
+                <span class="n">skip_tokens</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">(</span><span class="n">skip_tokens</span><span class="p">)</span>
+                <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">skip_tokens</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span>
+
+            <span class="n">skip_token_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">skip_tokens</span><span class="p">)</span>
+            <span class="n">itp_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">inp_tensor</span><span class="p">)</span>
+            <span class="n">itp_mask</span><span class="o">.</span><span class="n">map_</span><span class="p">(</span><span class="n">inp_tensor</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">_</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">v</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">skip_token_set</span><span class="p">)</span>
+            <span class="n">itp_mask</span> <span class="o">=</span> <span class="n">itp_mask</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+
+            <span class="n">itp_tensor</span> <span class="o">=</span> <span class="n">inp_tensor</span><span class="p">[</span><span class="n">itp_mask</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">itp_tensor</span> <span class="o">=</span> <span class="n">itp_tensor</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">itp_mask</span> <span class="o">=</span> <span class="n">itp_mask</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">skip_tokens</span> <span class="o">=</span> <span class="n">skip_tokens</span>
+
+        <span class="c1"># features values, the tokens</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">values</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_ids_to_tokens</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">itp_tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">tokenizer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_itp_features</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">baselines</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">baselines</span>
+            <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">baselines</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">int</span>
+            <span class="k">else</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">([</span><span class="n">baselines</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># type: ignore</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="TextTokenInput.to_tensor">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTokenInput.to_tensor">[docs]</a>
+    <span class="k">def</span> <span class="nf">to_tensor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># return the perturbation indicator as interpretable tensor instead of token ids</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">itp_tensor</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="TextTokenInput.to_model_input">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTokenInput.to_model_input">[docs]</a>
+    <span class="k">def</span> <span class="nf">to_model_input</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">perturbed_tensor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">perturbed_tensor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inp_tensor</span>
+
+        <span class="n">device</span> <span class="o">=</span> <span class="n">perturbed_tensor</span><span class="o">.</span><span class="n">device</span>
+
+        <span class="n">perturb_mask</span> <span class="o">=</span> <span class="n">perturbed_tensor</span> <span class="o">!=</span> <span class="mi">1</span>
+
+        <span class="c1"># perturb_per_eval or gradient based can expand the batch dim</span>
+        <span class="n">expand_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">perturbed_tensor</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">perturb_itp_tensor</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">itp_tensor</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">*</span><span class="n">expand_shape</span><span class="p">)</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">perturb_itp_tensor</span><span class="p">[</span><span class="n">perturb_mask</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">baselines</span>
+
+        <span class="c1"># if no iterpretable mask, the interpretable tensor is the input tensor</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">itp_mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">perturb_itp_tensor</span>
+
+        <span class="n">itp_mask</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">itp_mask</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">*</span><span class="n">expand_shape</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">perturb_inp_tensor</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">inp_tensor</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">*</span><span class="n">expand_shape</span><span class="p">)</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">perturb_inp_tensor</span><span class="p">[</span><span class="n">itp_mask</span><span class="p">]</span> <span class="o">=</span> <span class="n">perturb_itp_tensor</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">perturb_inp_tensor</span></div>
+
+
+<div class="viewcode-block" id="TextTokenInput.format_attr">
+<a class="viewcode-back" href="../../../../utilities.html#captum.attr.TextTokenInput.format_attr">[docs]</a>
+    <span class="k">def</span> <span class="nf">format_attr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">itp_attr</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">itp_attr</span></div>
+</div>
+
+
+
+<span class="k">class</span> <span class="nc">ImageMaskInput</span><span class="p">(</span><span class="n">InterpretableInput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    ImageMaskInput is an implementation of InterpretableInput for the image, whose</span>
+<span class="sd">    interpretable features are certain image segments (e.g., groups of pixels).</span>
+<span class="sd">    It takes an image and its corresponding segmentation masks .</span>
+<span class="sd">    Its interpretable representation will be a binary tensor of the number of</span>
+<span class="sd">    the image segment features whose values indicates if the image segment is</span>
+<span class="sd">    “presence” or “absence”. By default, its model input will be the masked out image.</span>
+<span class="sd">    But it also accepts an optional processor function, which converts the image into</span>
+<span class="sd">    the model inputs if the model does not directly consume images.</span>
+<span class="sd">    A typical example is MM LLM, which requires the image to be processed with</span>
+<span class="sd">    other texts into the tokenized multi-modality tensors.</span>
+
+<span class="sd">    Args:</span>
+
+<span class="sd">        image (PIL.Image.Image): an opened PIL image file.</span>
+<span class="sd">        mask (Tensor, optional): the mask to group the image pixels into</span>
+<span class="sd">                segment features. It must be in the same shape as the image size</span>
+<span class="sd">                and assign each pixel a mask index.</span>
+<span class="sd">                Pixels with the same index will be seen as a single</span>
+<span class="sd">                interpretable feature, which means they must be perturbed together</span>
+<span class="sd">                and end with same attributions. When mask is None, the entire image is</span>
+<span class="sd">                considered as one interpretable feature.</span>
+<span class="sd">                Default: None</span>
+<span class="sd">        mask_list (List[Tensor], optional): a list of binary masks to group</span>
+<span class="sd">                the image pixels as interpretable segment features. Each mask indicates</span>
+<span class="sd">                one feature and must be in the same shape as the image size. Value True</span>
+<span class="sd">                means the pixel is included in the feature. Compared to mask, mask_list</span>
+<span class="sd">                allows multiple features to be defined on the same pixel. If mask_list</span>
+<span class="sd">                is not None, mask will be ignored.</span>
+<span class="sd">                Default: None</span>
+<span class="sd">        baseline (Tuple[int, int, int], optional): the baseline RGB value for</span>
+<span class="sd">                the “absent” image pixels.</span>
+<span class="sd">                Default: (255, 255, 255)</span>
+<span class="sd">        processor_fn (Callable, optional): function convert the image into</span>
+<span class="sd">                the model input. A common example is the multi-modality LLM processor</span>
+<span class="sd">                function which take an input image to encode with any text prompt</span>
+<span class="sd">                and outputs the inputs for the LLM</span>
+
+<span class="sd">    Examples::</span>
+
+<span class="sd">        &gt;&gt;&gt; def processor_fn(image):</span>
+<span class="sd">        &gt;&gt;&gt;    messages = [</span>
+<span class="sd">        &gt;&gt;&gt;        {</span>
+<span class="sd">        &gt;&gt;&gt;            "role": "user",</span>
+<span class="sd">        &gt;&gt;&gt;            "content": [</span>
+<span class="sd">        &gt;&gt;&gt;                {"type": "image"},</span>
+<span class="sd">        &gt;&gt;&gt;                {</span>
+<span class="sd">        &gt;&gt;&gt;                    "type": "text",</span>
+<span class="sd">        &gt;&gt;&gt;                    "text": "Please describe the image in detail.",</span>
+<span class="sd">        &gt;&gt;&gt;                },</span>
+<span class="sd">        &gt;&gt;&gt;            ],</span>
+<span class="sd">        &gt;&gt;&gt;        }</span>
+<span class="sd">        &gt;&gt;&gt;    ]</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt;    prompt = processor.apply_chat_template(</span>
+<span class="sd">        &gt;&gt;&gt;        messages, add_generation_prompt=True</span>
+<span class="sd">        &gt;&gt;&gt;    )</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt;    return processor(</span>
+<span class="sd">        &gt;&gt;&gt;        text=prompt,</span>
+<span class="sd">        &gt;&gt;&gt;        images=image,</span>
+<span class="sd">        &gt;&gt;&gt;        return_tensors="pt",</span>
+<span class="sd">        &gt;&gt;&gt;    ).to(model.device)</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; image = Image.open("test.jpg")</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; # Split horizontally: left half = 0, right half = 1</span>
+<span class="sd">        &gt;&gt;&gt; mask = torch.zeros(image.size[::-1], dtype=torch.int32)</span>
+<span class="sd">        &gt;&gt;&gt; mask[:, image.size[0] // 2:] = 1</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; image_mask_inp = ImageMaskInput(</span>
+<span class="sd">        &gt;&gt;&gt;     image=image,</span>
+<span class="sd">        &gt;&gt;&gt;     mask=mask,</span>
+<span class="sd">        &gt;&gt;&gt;     processor_fn=processor_fn,</span>
+<span class="sd">        &gt;&gt;&gt; )</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; text_inp.to_tensor()</span>
+<span class="sd">        &gt;&gt;&gt; # torch.tensor([[1, 1]])</span>
+<span class="sd">        &gt;&gt;&gt;</span>
+<span class="sd">        &gt;&gt;&gt; text_inp.to_model_input(torch.tensor([[0, 1]]))</span>
+<span class="sd">        &gt;&gt;&gt; # model inputs where the right half of the image is masked out</span>
+
+<span class="sd">    """</span>
+
+    <span class="n">image</span><span class="p">:</span> <span class="n">PIL</span><span class="o">.</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="n">Tensor</span>
+    <span class="n">mask_list</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span>
+    <span class="n">baseline</span><span class="p">:</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+    <span class="n">processor_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">PIL</span><span class="o">.</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="n">n_itp_features</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">original_model_inputs</span><span class="p">:</span> <span class="n">Any</span>
+    <span class="n">mask_id_to_idx</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">image</span><span class="p">:</span> <span class="n">PIL</span><span class="o">.</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">,</span>
+        <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">mask_list</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">baseline</span><span class="p">:</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">255</span><span class="p">,</span> <span class="mi">255</span><span class="p">,</span> <span class="mi">255</span><span class="p">),</span>
+        <span class="n">processor_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">PIL</span><span class="o">.</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">processor_fn</span> <span class="o">=</span> <span class="n">processor_fn</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">image</span> <span class="o">=</span> <span class="n">image</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">baseline</span> <span class="o">=</span> <span class="n">baseline</span>
+
+        <span class="n">image_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>  <span class="c1"># (height, width)</span>
+
+        <span class="k">if</span> <span class="n">mask_list</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Validate that all masks in mask_list have the correct shape</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">m</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">mask_list</span><span class="p">):</span>
+                <span class="k">assert</span> <span class="n">m</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="n">image_shape</span><span class="p">,</span> <span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"mask_list[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">] shape </span><span class="si">{</span><span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2"> must match "</span>
+                    <span class="sa">f</span><span class="s2">"image shape </span><span class="si">{</span><span class="n">image_shape</span><span class="si">}</span><span class="s2">"</span>
+                <span class="p">)</span>
+
+            <span class="n">mask_ids</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">mask_list</span><span class="p">)))</span>
+            <span class="c1"># Create a dummy mask for compatibility</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Create a dummy mask if None is provided</span>
+            <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="c1"># Create a mask with all zeros (entire image as one segment)</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">image_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Validate that mask size matches image size</span>
+                <span class="k">assert</span> <span class="p">(</span>
+                    <span class="n">mask</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="n">image_shape</span>
+                <span class="p">),</span> <span class="sa">f</span><span class="s2">"mask shape </span><span class="si">{</span><span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2"> must match image shape </span><span class="si">{</span><span class="n">image_shape</span><span class="si">}</span><span class="s2">"</span>
+
+            <span class="n">mask_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+
+            <span class="c1"># dummy mask_list</span>
+            <span class="n">mask_list</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">=</span> <span class="n">mask</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask_list</span> <span class="o">=</span> <span class="n">mask_list</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_itp_features</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">mask_ids</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask_id_to_idx</span> <span class="o">=</span> <span class="p">{</span><span class="nb">int</span><span class="p">(</span><span class="n">mid</span><span class="p">):</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">mid</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">mask_ids</span><span class="p">)}</span>
+
+        <span class="c1"># temporarily for compatibility with AttributionResult</span>
+        <span class="c1"># which use the values for plot legends</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">values</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"image_feature_</span><span class="si">{</span><span class="n">mid</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">mid</span> <span class="ow">in</span> <span class="n">mask_ids</span><span class="p">]</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">original_model_inputs</span> <span class="o">=</span> <span class="n">processor_fn</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">to_tensor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mf">1.0</span><span class="p">]</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_itp_features</span><span class="p">])</span>
+
+    <span class="k">def</span> <span class="nf">to_model_input</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">perturbed_tensor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">perturbed_tensor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">original_model_inputs</span>
+
+        <span class="n">img_array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">image</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_list</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">itp_idx</span><span class="p">,</span> <span class="n">feature_mask</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mask_list</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">perturbed_tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">itp_idx</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">mask_positions</span> <span class="o">=</span> <span class="n">feature_mask</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+                    <span class="n">img_array</span><span class="p">[</span><span class="n">mask_positions</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">baseline</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">mask_id</span><span class="p">,</span> <span class="n">itp_idx</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_id_to_idx</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">perturbed_tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">itp_idx</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">mask_positions</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">==</span> <span class="n">mask_id</span>
+                    <span class="n">img_array</span><span class="p">[</span><span class="n">mask_positions</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">baseline</span>
+
+        <span class="n">perturbed_image</span> <span class="o">=</span> <span class="n">PIL</span><span class="o">.</span><span class="n">Image</span><span class="o">.</span><span class="n">fromarray</span><span class="p">(</span><span class="n">img_array</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"uint8"</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">processor_fn</span><span class="p">(</span><span class="n">perturbed_image</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_mask_list</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Get the list of binary masks for each interpretable feature.</span>
+<span class="sd">        If mask_list is provided, return it directly. Otherwise, create</span>
+<span class="sd">        a list of binary masks from the mask tensor.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            List[Tensor]: list of binary masks, one for each interpretable feature</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_list</span> <span class="ow">or</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">==</span> <span class="n">mask_id</span> <span class="k">for</span> <span class="n">mask_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_id_to_idx</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span>
+        <span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">format_attr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">itp_attr</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Attribution for interpretable image segments</span>
+<span class="sd">        Returns: 2D tensor of shape (1, n_itp_features)</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="n">itp_attr</span>
+
+    <span class="k">def</span> <span class="nf">format_pixel_attr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">itp_attr</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Attribution for image pixels.</span>
+<span class="sd">        When mask_list is used, attributions from overlapping features are summed.</span>
+<span class="sd">        Returns: 3D tensor of shape (1, height, width)</span>
+<span class="sd">        """</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">image_shape</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>  <span class="c1"># (height, width)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_list</span><span class="p">:</span>
+            <span class="c1"># For mask_list, sum attributions from overlapping features</span>
+            <span class="n">output_dims</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">attr_shape</span> <span class="o">=</span> <span class="p">(</span><span class="o">*</span><span class="n">output_dims</span><span class="p">,</span> <span class="o">*</span><span class="n">image_shape</span><span class="p">)</span>
+            <span class="n">formatted_attr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">attr_shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">itp_idx</span><span class="p">,</span> <span class="n">feature_mask</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mask_list</span><span class="p">):</span>
+                <span class="c1"># Get attribution value for this feature</span>
+                <span class="c1"># itp_attr shape: (*output_dims, n_itp_features)</span>
+                <span class="n">feature_attr</span> <span class="o">=</span> <span class="n">itp_attr</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">itp_idx</span><span class="p">]</span>
+                <span class="c1"># Expand to match image shape and add where mask is True</span>
+                <span class="n">mask_bool</span> <span class="o">=</span> <span class="n">feature_mask</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+                <span class="c1"># Expand feature_attr to broadcast with mask</span>
+                <span class="n">expanded_attr</span> <span class="o">=</span> <span class="n">feature_attr</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+                <span class="n">formatted_attr</span> <span class="o">=</span> <span class="n">formatted_attr</span> <span class="o">+</span> <span class="n">expanded_attr</span> <span class="o">*</span> <span class="n">mask_bool</span>
+
+            <span class="k">return</span> <span class="n">formatted_attr</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Map mask IDs to continuous indices</span>
+            <span class="n">formatted_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mask</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">mask_id</span><span class="p">,</span> <span class="n">itp_idx</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_id_to_idx</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">formatted_mask</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">==</span> <span class="n">mask_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">itp_idx</span>
+
+            <span class="n">formatted_attr</span> <span class="o">=</span> <span class="n">_scatter_itp_attr_by_mask</span><span class="p">(</span>
+                <span class="n">itp_attr</span><span class="p">,</span>
+                <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">image_shape</span><span class="p">),</span>
+                <span class="n">formatted_mask</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">formatted_attr</span>
+
+    <span class="k">def</span> <span class="nf">plot_mask_overlay</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">show</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">border_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">show_legends</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">[</span><span class="s2">"Figure"</span><span class="p">,</span> <span class="s2">"Axes"</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        util to help visualize the mask segementation</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            show: If True, display the plot immediately using plt.show().</span>
+<span class="sd">                  If False, return the figure and axes objects.</span>
+<span class="sd">            border_width: Width of the border around each segment in pixels.</span>
+<span class="sd">                          Set to 0 to disable borders. Default is 0.</span>
+<span class="sd">            show_legends: If True, display the mask id for each segment at its</span>
+<span class="sd">                          centroid. Default is True.</span>
+<span class="sd">        """</span>
+
+        <span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="nn">plt</span>
+
+        <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">()</span>
+
+        <span class="n">ax</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">fig</span><span class="o">.</span><span class="n">set_facecolor</span><span class="p">(</span><span class="s2">"white"</span><span class="p">)</span>
+
+        <span class="c1"># random colors for all interpretable features</span>
+        <span class="n">opacity</span> <span class="o">=</span> <span class="mf">0.6</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">(</span><span class="mi">3</span><span class="p">),</span> <span class="n">opacity</span><span class="p">])</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_itp_features</span><span class="p">)</span>
+        <span class="p">]</span>
+
+        <span class="n">mask_list</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_mask_list</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">mask</span><span class="p">,</span> <span class="n">color</span><span class="p">,</span> <span class="n">mid</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">mask_list</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_id_to_idx</span><span class="o">.</span><span class="n">keys</span><span class="p">()):</span>
+            <span class="n">mask_np</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">bool</span><span class="p">)</span>
+            <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">mask_np</span><span class="o">.</span><span class="n">shape</span>
+            <span class="n">mask_image</span> <span class="o">=</span> <span class="n">mask_np</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">color</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">mask_image</span><span class="p">)</span>
+
+            <span class="c1"># Add border inside each segment using erosion</span>
+            <span class="k">if</span> <span class="n">border_width</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">border_color</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">*</span><span class="n">color</span><span class="p">[:</span><span class="mi">3</span><span class="p">],</span> <span class="mf">0.8</span><span class="p">])</span>
+                <span class="n">draw_mask_border</span><span class="p">(</span><span class="n">ax</span><span class="p">,</span> <span class="n">mask_np</span><span class="p">,</span> <span class="n">border_width</span><span class="p">,</span> <span class="n">border_color</span><span class="p">)</span>
+
+            <span class="c1"># Calculate centroid and display mask id</span>
+            <span class="k">if</span> <span class="n">show_legends</span><span class="p">:</span>
+                <span class="n">draw_mask_legend</span><span class="p">(</span><span class="n">ax</span><span class="p">,</span> <span class="n">mask_np</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">mid</span><span class="p">))</span>
+
+        <span class="n">ax</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">"off"</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">show</span><span class="p">:</span>
+            <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span>
+</pre></div>
+</div>
+</div>
+</div>
+<div aria-label="Main" class="sphinxsidebar" role="navigation">
+<div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../../index.html">Captum</a></h1>
+<search id="searchbox" role="search" style="display: none">
+<div class="searchformwrapper">
+<form action="../../../../search.html" class="search" method="get">
+<input aria-labelledby="searchlabel" autocapitalize="off" autocomplete="off" autocorrect="off" name="q" placeholder="Search" spellcheck="false" type="text"/>
+<input type="submit" value="Go"/>
+</form>
+</div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../attribution.html">Attribution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../llm_attr.html">LLM Attribution Classes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../noise_tunnel.html">NoiseTunnel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../layer.html">Layer Attribution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../neuron.html">Neuron Attribution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../metrics.html">Metrics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../robust.html">Robustness</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../concept.html">Concept-based Interpretability</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../influence.html">Influential Examples</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../module.html">Module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../utilities.html">Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../base_classes.html">Base Classes</a></li>
+</ul>
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+<li><a href="../../../../index.html">Documentation overview</a><ul>
+<li><a href="../../../index.html">Module code</a><ul>
+</ul></li>
+</ul></li>
+</ul>
+</div>
+</div>
+</div>
+<div class="clearer"></div>
+</div></div></div><footer class="nav-footer" id="footer"><section class="sitemap"><div class="footerSection"><h5>Docs</h5><a href="/docs/introduction">Introduction</a><a href="/docs/getting_started">Getting Started</a><a href="/tutorials/">Tutorials</a><a href="/api/">API Reference</a></div><div class="footerSection"><h5>Legal</h5><a href="https://opensource.facebook.com/legal/privacy/" target="_blank" rel="noreferrer noopener">Privacy</a><a href="https://opensource.facebook.com/legal/terms/" target="_blank" rel="noreferrer noopener">Terms</a></div><div class="footerSection"><h5>Social</h5><div class="social"><a class="github-button" href="https://github.com/pytorch/captum" data-count-href="https://github.com/pytorch/captum/stargazers" data-show-count="true" data-count-aria-label="# stargazers on GitHub" aria-label="Star Captum on GitHub">captum</a></div></div></section><a href="https://opensource.facebook.com/" target="_blank" rel="noreferrer noopener" class="fbOpenSource"><img src="/img/oss_logo.png" alt="Facebook Open Source" width="170" height="45"/></a><section class="copyright"> Copyright © 2026 Meta Platforms, Inc.</section><script>
+            (function() {
+              var BAD_BASE = '/captum/';
+              if (window.location.origin !== 'https://captum.ai') {
+                var pathname = window.location.pathname;
+                var newPathname = pathname.slice(pathname.indexOf(BAD_BASE) === 0 ? BAD_BASE.length : 1);
+                var newLocation = 'https://captum.ai/' + newPathname;
+                console.log('redirecting to ' + newLocation);
+                window.location.href = newLocation;
+              }
+            })();
+          </script></footer></div><script type="text/javascript" src="https://cdn.jsdelivr.net/docsearch.js/1/docsearch.min.js"></script><script>
+                document.addEventListener('keyup', function(e) {
+                  if (e.target !== document.body) {
+                    return;
+                  }
+                  // keyCode for '/' (slash)
+                  if (e.keyCode === 191) {
+                    const search = document.getElementById('search_input_react');
+                    search && search.focus();
+                  }
+                });
+              </script><script>
+              var search = docsearch({
+                
+                apiKey: '207c27d819f967749142d8611de7cb19',
+                indexName: 'captum',
+                inputSelector: '#search_input_react'
+              });
+            </script></body></html>
