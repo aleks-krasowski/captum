@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import typing
 from inspect import signature
-from typing import Any, Callable, List, Tuple, TYPE_CHECKING, Union
+from typing import Callable, List, Literal, Optional, Tuple, TYPE_CHECKING, Union
 
 import torch
 from captum._utils.common import (
@@ -10,12 +17,7 @@ from captum._utils.common import (
     _format_tensor_into_tuples,
     _validate_input as _validate_input_basic,
 )
-from captum._utils.typing import (
-    BaselineType,
-    Literal,
-    TargetType,
-    TensorOrTupleOfTensorsGeneric,
-)
+from captum._utils.typing import BaselineType, TargetType, TensorOrTupleOfTensorsGeneric
 from captum.attr._utils.approximation_methods import SUPPORTED_METHODS
 from torch import Tensor
 
@@ -75,8 +77,14 @@ def _format_input_baseline(
 
 
 @typing.overload
-def _format_input_baseline(
+def _format_input_baseline(  # type: ignore
     inputs: Union[Tensor, Tuple[Tensor, ...]], baselines: BaselineType
+) -> Tuple[Tuple[Tensor, ...], Tuple[Union[Tensor, int, float], ...]]: ...
+
+
+@typing.overload
+def _format_input_baseline(  # type: ignore
+    inputs: TensorOrTupleOfTensorsGeneric, baselines: BaselineType
 ) -> Tuple[Tuple[Tensor, ...], Tuple[Union[Tensor, int, float], ...]]: ...
 
 
@@ -165,6 +173,9 @@ def _format_and_verify_strides(
             i, strides[i], inputs[i].shape
         )
 
+    # pyre-fixme[7]: Expected `Tuple[Union[int, typing.Tuple[int, ...]], ...]` but
+    #  got `Union[Tuple[Union[int, typing.Tuple[Union[int, typing.Tuple[int, ...]],
+    #  ...]]], typing.Tuple[Union[int, typing.Tuple[int, ...]], ...]]`.
     return strides
 
 
@@ -176,6 +187,7 @@ def _format_and_verify_sliding_window_shapes(
     # Assumes inputs is already formatted (in tuple)
     if isinstance(sliding_window_shapes[0], int):
         sliding_window_shapes = (sliding_window_shapes,)  # type: ignore
+    # pyre-fixme[35]: Target cannot be annotated.
     sliding_window_shapes: Tuple[Tuple[int, ...], ...]
     assert len(sliding_window_shapes) == len(
         inputs
@@ -200,7 +212,20 @@ def _compute_conv_delta_and_format_attrs(
     attributions: Tuple[Tensor, ...],
     start_point: Union[int, float, Tensor, Tuple[Union[int, float, Tensor], ...]],
     end_point: Union[Tensor, Tuple[Tensor, ...]],
-    additional_forward_args: Any,
+    additional_forward_args: Optional[object],
+    target: TargetType,
+    is_inputs_tuple: Literal[True],
+) -> Union[Tuple[Tensor, ...], Tuple[Tuple[Tensor, ...], Tensor]]: ...
+
+
+@typing.overload
+def _compute_conv_delta_and_format_attrs(
+    attr_algo: "GradientAttribution",
+    return_convergence_delta: bool,
+    attributions: Tuple[Tensor, ...],
+    start_point: Union[int, float, Tensor, Tuple[Union[int, float, Tensor], ...]],
+    end_point: Union[Tensor, Tuple[Tensor, ...]],
+    additional_forward_args: Optional[object],
     target: TargetType,
     is_inputs_tuple: Literal[False] = False,
 ) -> Union[Tensor, Tuple[Tensor, Tensor]]: ...
@@ -213,10 +238,12 @@ def _compute_conv_delta_and_format_attrs(
     attributions: Tuple[Tensor, ...],
     start_point: Union[int, float, Tensor, Tuple[Union[int, float, Tensor], ...]],
     end_point: Union[Tensor, Tuple[Tensor, ...]],
-    additional_forward_args: Any,
+    additional_forward_args: Optional[object],
     target: TargetType,
-    is_inputs_tuple: Literal[True],
-) -> Union[Tuple[Tensor, ...], Tuple[Tuple[Tensor, ...], Tensor]]: ...
+    is_inputs_tuple: bool = False,
+) -> Union[
+    Tensor, Tuple[Tensor, ...], Tuple[Union[Tensor, Tuple[Tensor, ...]], Tensor]
+]: ...
 
 
 # FIXME: GradientAttribution is provided as a string due to a circular import.
@@ -227,7 +254,7 @@ def _compute_conv_delta_and_format_attrs(
     attributions: Tuple[Tensor, ...],
     start_point: Union[int, float, Tensor, Tuple[Union[int, float, Tensor], ...]],
     end_point: Union[Tensor, Tuple[Tensor, ...]],
-    additional_forward_args: Any,
+    additional_forward_args: Optional[object],
     target: TargetType,
     is_inputs_tuple: bool = False,
 ) -> Union[
@@ -250,6 +277,8 @@ def _compute_conv_delta_and_format_attrs(
 def _tensorize_baseline(
     inputs: Tuple[Tensor, ...], baselines: Tuple[Union[int, float, Tensor], ...]
 ) -> Tuple[Tensor, ...]:
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def _tensorize_single_baseline(baseline, input):
         if isinstance(baseline, (int, float)):
             return torch.full_like(input, baseline)
@@ -340,7 +369,7 @@ def _find_output_mode_and_verify(
                     "returns a scalar."
                 )
     else:
-        agg_output_mode = False
+        agg_output_mode = perturbations_per_eval == 1
         if not allow_multi_outputs:
             assert (
                 isinstance(initial_eval, torch.Tensor) and initial_eval[0].numel() == 1
@@ -349,7 +378,7 @@ def _find_output_mode_and_verify(
 
 
 def _construct_default_feature_mask(
-    inputs: Tuple[Tensor, ...]
+    inputs: Tuple[Tensor, ...],
 ) -> Tuple[Tuple[Tensor, ...], int]:
     feature_mask = []
     current_num_features = 0
@@ -366,3 +395,16 @@ def _construct_default_feature_mask(
     total_features = current_num_features
     feature_mask = tuple(feature_mask)
     return feature_mask, total_features
+
+
+def get_total_features_from_mask(
+    feature_mask: Tuple[Tensor, ...],
+) -> int:
+    """
+    Return the numbers of input features based on the total unique
+    feature IDs/indices in the feature mask.
+    """
+    seen_idxs = set()
+    for mask in feature_mask:
+        seen_idxs |= set(torch.unique(mask).tolist())
+    return len(seen_idxs)

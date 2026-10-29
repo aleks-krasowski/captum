@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 import unittest
 from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 from captum._utils.typing import TensorLikeList
 from captum.attr._core.layer.grad_cam import LayerGradCam
-from packaging import version
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorTuplesAlmostEqual
-from tests.helpers.basic_models import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorTuplesAlmostEqual
+from captum.testing.helpers.basic_models import (
     BasicModel_ConvNet_One_Conv,
     BasicModel_MultiLayer,
 )
+from packaging import version
 from torch import Tensor
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_simple_input_non_conv(self) -> None:
         net = BasicModel_MultiLayer()

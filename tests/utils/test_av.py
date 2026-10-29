@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 import glob
 import tempfile
 from datetime import datetime
@@ -5,9 +11,9 @@ from typing import cast, List
 
 import torch
 from captum._utils.av import AV
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicLinearReLULinear
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicLinearReLULinear
 from torch.utils.data import DataLoader, Dataset
 
 DEFAULT_IDENTIFIER = "default_identifier"
@@ -24,10 +30,12 @@ class RangeDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
+    # pyrefly: ignore [bad-override-param-name]
     def __getitem__(self, idx):
         return self.samples[idx]
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_exists_without_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

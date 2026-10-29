@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
 from typing import Any, List, Tuple, Union
 
 import torch
-from captum._utils.typing import TensorLikeList, TensorOrTupleOfTensorsGeneric
+from captum._utils.typing import (
+    SliceIntType,
+    TensorLikeList,
+    TensorOrTupleOfTensorsGeneric,
+)
 from captum.attr._core.guided_backprop_deconvnet import GuidedBackprop
 from captum.attr._core.neuron.neuron_guided_backprop_deconvnet import (
     NeuronGuidedBackprop,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel_ConvNet_One_Conv
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicModel_ConvNet_One_Conv
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_simple_input_conv_gb(self) -> None:
         net = BasicModel_ConvNet_One_Conv()
@@ -125,7 +137,7 @@ class Test(BaseTest):
         self,
         model: Module,
         layer: Module,
-        neuron_selector: Union[int, Tuple[Union[int, slice], ...]],
+        neuron_selector: Union[int, Tuple[Union[int, SliceIntType], ...]],
         test_input: TensorOrTupleOfTensorsGeneric,
         expected: Tuple[List[List[List[List[float]]]], ...],
         additional_input: Any = None,

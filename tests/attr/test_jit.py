@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
+from __future__ import annotations
+
 import unittest
 from enum import Enum
 from typing import Any, Callable, cast, Dict, Tuple, Type
@@ -20,13 +30,17 @@ from captum.attr._core.occlusion import Occlusion
 from captum.attr._core.saliency import Saliency
 from captum.attr._core.shapley_value import ShapleyValueSampling
 from captum.attr._utils.attribution import Attribution
-from tests.attr.helpers.gen_test_utils import (
+from captum.testing.attr.helpers.gen_test_utils import (
     gen_test_name,
     parse_test_config,
     should_create_generated_test,
 )
-from tests.attr.helpers.test_config import config
-from tests.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest, deep_copy_args
+from captum.testing.attr.helpers.test_config import config
+from captum.testing.helpers.basic import (
+    assertTensorTuplesAlmostEqual,
+    BaseTest,
+    deep_copy_args,
+)
 from torch import Tensor
 from torch.nn import Module
 
@@ -73,7 +87,12 @@ class JITCompareMode(Enum):
 
 
 class JITMeta(type):
-    def __new__(cls, name: str, bases: Tuple, attrs: Dict):
+    def __new__(
+        metacls,
+        name: str,
+        bases: Tuple[Type[Any], ...],
+        attrs: Dict[str, Callable[..., None]],
+    ) -> JITMeta:
         for test_config in config:
             (
                 algorithms,
@@ -90,7 +109,7 @@ class JITMeta(type):
                     for mode in JITCompareMode:
                         # Creates test case corresponding to each algorithm and
                         # JITCompareMode
-                        test_method = cls.make_single_jit_test(
+                        test_method = metacls.make_single_jit_test(
                             algorithm, model, args, noise_tunnel, baseline_distr, mode
                         )
                         test_name = gen_test_name(
@@ -106,26 +125,26 @@ class JITMeta(type):
                             )
                         attrs[test_name] = test_method
 
-        return super(JITMeta, cls).__new__(cls, name, bases, attrs)
+        return super(JITMeta, metacls).__new__(metacls, name, bases, attrs)
 
     # Arguments are deep copied to ensure tests are independent and are not affected
     # by any modifications within a previous test.
     @classmethod
     @deep_copy_args
     def make_single_jit_test(
-        cls,
+        metacls,
         algorithm: Type[Attribution],
         model: Module,
         args: Dict[str, Any],
         noise_tunnel: bool,
         baseline_distr: bool,
         mode: JITCompareMode,
-    ) -> Callable:
+    ) -> Callable[[BaseTest], None]:
         """
         This method creates a single JIT test for the given algorithm and parameters.
         """
 
-        def jit_test_assert(self) -> None:
+        def jit_test_assert(self: BaseTest) -> None:
             model_1 = model
             attr_args = args
             if (
@@ -161,12 +180,18 @@ class JITMeta(type):
                 mode is JITCompareMode.cpu_jit_trace
                 or JITCompareMode.data_parallel_jit_trace
             ):
-                all_inps = _format_tensor_into_tuples(args["inputs"]) + (
+                formatted_inputs = _format_tensor_into_tuples(args["inputs"])
+                additional_args: Tuple[Any, ...] = (
+                    # pyrefly: ignore [bad-assignment]
                     _format_additional_forward_args(args["additional_forward_args"])
                     if "additional_forward_args" in args
                     and args["additional_forward_args"] is not None
                     else ()
                 )
+                if formatted_inputs is not None:
+                    all_inps = formatted_inputs + additional_args
+                else:
+                    all_inps = additional_args
                 model_2 = torch.jit.trace(model_1, all_inps)  # type: ignore
             else:
                 raise AssertionError("JIT compare mode type is not valid.")

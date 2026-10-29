@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 from enum import Enum
-from typing import Callable, List, Tuple
+from typing import Callable, cast, List, Tuple
 
 import torch
 
@@ -19,7 +26,7 @@ SUPPORTED_RIEMANN_METHODS = [
     "riemann_trapezoid",
 ]
 
-SUPPORTED_METHODS = SUPPORTED_RIEMANN_METHODS + ["gausslegendre"]
+SUPPORTED_METHODS: List[str] = SUPPORTED_RIEMANN_METHODS + ["gausslegendre"]
 
 
 def approximation_parameters(
@@ -119,15 +126,22 @@ def gauss_legendre_builders() -> (
 
     # allow using riemann even without np
     import numpy as np
+    from numpy.typing import NDArray
 
     def step_sizes(n: int) -> List[float]:
         assert n > 0, "The number of steps has to be larger than zero"
         # Scaling from 2 to 1
-        return list(0.5 * np.polynomial.legendre.leggauss(n)[1])
+        # pyre-ignore[22]: Cast needed for internal Pyre
+        return cast(
+            NDArray[np.float64], 0.5 * np.polynomial.legendre.leggauss(n)[1]
+        ).tolist()
 
     def alphas(n: int) -> List[float]:
         assert n > 0, "The number of steps has to be larger than zero"
         # Scaling from [-1, 1] to [0, 1]
-        return list(0.5 * (1 + np.polynomial.legendre.leggauss(n)[0]))
+        # pyre-ignore[22]: Cast needed for internal Pyre
+        return cast(
+            NDArray[np.float64], 0.5 * (1 + np.polynomial.legendre.leggauss(n)[0])
+        ).tolist()
 
     return step_sizes, alphas

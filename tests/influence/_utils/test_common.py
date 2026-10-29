@@ -1,14 +1,19 @@
-# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 
 # !/usr/bin/env python3
 
 import torch
-
 from captum.influence._utils.common import _jacobian_loss_wrt_inputs
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestCommon(BaseTest):
     def setUp(self) -> None:
         super().setUp()

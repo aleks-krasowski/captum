@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from enum import Enum
 from typing import Any, Callable, cast, Dict, Optional, Tuple, Type
 
@@ -7,20 +14,20 @@ import torch
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._models.base import _set_deep_layer_value
 from captum.attr._utils.attribution import Attribution, InternalAttribution
-from tests.attr.helpers.gen_test_utils import (
+from captum.testing.attr.helpers.gen_test_utils import (
     gen_test_name,
     get_target_layer,
     parse_test_config,
     should_create_generated_test,
 )
-from tests.attr.helpers.test_config import config
-from tests.helpers import BaseTest
-from tests.helpers.basic import deep_copy_args
+from captum.testing.attr.helpers.test_config import config
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import deep_copy_args
 from torch.nn import Module
 
 """
 Tests in this file are dynamically generated based on the config
-defined in tests/attr/helpers/test_config.py. To add new test cases,
+defined in captum/testing/attr/helpers/test_config.py. To add new test cases,
 read the documentation in test_config.py and add cases based on the
 schema described there.
 """
@@ -50,7 +57,7 @@ class ErrorModule(Module):
         super().__init__()
         self.relu = torch.nn.ReLU()
 
-    def forward(*args, **kwargs):
+    def forward(self, *args: Any, **kwargs: Any) -> None:
         raise AssertionError("Raising error on execution")
 
 
@@ -61,7 +68,9 @@ class HookRemovalMeta(type):
     that no forward, backward or forward pre hooks remain on any modules.
     """
 
-    def __new__(cls, name: str, bases: Tuple, attrs: Dict):
+    def __new__(
+        cls, name: str, bases: Tuple[Type[Any], ...], attrs: Dict[str, Any]
+    ) -> "HookRemovalMeta":
         created_tests: Dict[Tuple[Type[Attribution], HookRemovalMode], bool] = {}
         for test_config in config:
             (
@@ -119,13 +128,13 @@ class HookRemovalMeta(type):
         args: Dict[str, Any],
         noise_tunnel: bool,
         mode: HookRemovalMode,
-    ) -> Callable:
+    ) -> Callable[..., None]:
         """
         This method creates a single hook removal test for the given
         algorithm and parameters.
         """
 
-        def hook_removal_test_assert(self) -> None:
+        def hook_removal_test_assert(self: "TestHookRemoval") -> None:
             attr_method: Attribution
             expect_error = False
             if layer is not None:
@@ -136,7 +145,7 @@ class HookRemovalMeta(type):
                     else:
                         _set_deep_layer_value(model, layer, ErrorModule())
                 target_layer = get_target_layer(model, layer)
-                internal_algorithm = cast(Type[InternalAttribution], algorithm)
+                internal_algorithm = cast(Type[InternalAttribution[Module]], algorithm)
                 attr_method = internal_algorithm(model, target_layer)
             else:
                 attr_method = algorithm(model)
@@ -160,7 +169,7 @@ class HookRemovalMeta(type):
             else:
                 attr_method.attribute(**args)
 
-            def check_leftover_hooks(module):
+            def check_leftover_hooks(module: Module) -> None:
                 self.assertEqual(len(module._forward_hooks), 0)
                 self.assertEqual(len(module._backward_hooks), 0)
                 self.assertEqual(len(module._forward_pre_hooks), 0)
@@ -170,5 +179,6 @@ class HookRemovalMeta(type):
         return hook_removal_test_assert
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestHookRemoval(BaseTest, metaclass=HookRemovalMeta):
     pass

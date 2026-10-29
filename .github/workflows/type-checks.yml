@@ -1,0 +1,34 @@
+name: Type checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+  workflow_dispatch:
+
+jobs:
+  tests:
+    strategy:
+      matrix:
+        pytorch_args: ["", "-n"]
+      fail-fast: false
+    uses: pytorch/test-infra/.github/workflows/linux_job_v2.yml@main
+    with:
+      runner: linux.12xlarge
+      docker-image: cimg/python:3.11
+      script: |
+        sudo chmod -R 777 .
+        ./scripts/install_via_pip.sh ${{ matrix.pytorch_args }} -d
+        pip install pyrefly
+        pyrefly --version
+        # Type checking covers the `captum` library itself, not tests, tutorials,
+        # docs, or the website scaffolding. Naming the scope and behavior here
+        # rather than in a config file keeps this job self-contained.
+        pyrefly check captum \
+          --project-excludes='**/fb/**' \
+          --python-version=3.10 \
+          --permissive-ignores \
+          --untyped-def-behavior=check-and-infer-return-any \
+          --output-format=full-text-with-github

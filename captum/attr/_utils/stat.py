@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
-from typing import Any, Callable, List, Optional, TYPE_CHECKING
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
+from typing import (
+    Any,
+    Callable,
+    cast,
+    Dict,
+    List,
+    Optional,
+    TYPE_CHECKING,
+    TypeVar,
+    Union,
+)
 
 import torch
 from torch import Tensor
 
 if TYPE_CHECKING:
     from captum.attr._utils.summarizer import SummarizerSingleTensor
+
+_S = TypeVar("_S", bound="Stat")
+StatValue = Union[Tensor, int, float]
 
 
 class Stat:
@@ -29,25 +50,25 @@ class Stat:
             kwargs (Any):
                 Additional arguments used to construct the statistic
         """
-        self.params = kwargs
+        self.params: Dict[str, Any] = kwargs
         self._name = name
 
         self._other_stats: Optional[SummarizerSingleTensor] = None
 
-    def init(self):
+    def init(self) -> None:
         pass
 
-    def _get_stat(self, stat: "Stat") -> Optional["Stat"]:
+    def _get_stat(self, stat: _S) -> Optional[_S]:
         assert self._other_stats is not None
-        return self._other_stats.get(stat)
+        return cast(Optional[_S], self._other_stats.get(stat))
 
-    def update(self, x: Tensor):
+    def update(self, x: Tensor) -> None:
         raise NotImplementedError()
 
-    def get(self) -> Optional[Tensor]:
+    def get(self) -> Optional[StatValue]:
         raise NotImplementedError()
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash((self.__class__, frozenset(self.params.items())))
 
     def __eq__(self, other: object) -> bool:
@@ -62,7 +83,7 @@ class Stat:
         return not self.__eq__(other)
 
     @property
-    def name(self):
+    def name(self) -> str:
         """
         The name of the statistic. i.e. it is the key in a .summary
 
@@ -85,12 +106,12 @@ class Count(Stat):
 
     def __init__(self, name: Optional[str] = None) -> None:
         super().__init__(name=name)
-        self.n = None
+        self.n: Optional[int] = None
 
-    def get(self):
+    def get(self) -> Optional[int]:
         return self.n
 
-    def update(self, x):
+    def update(self, x: Tensor) -> None:
         if self.n is None:
             self.n = 0
         self.n += 1
@@ -109,18 +130,21 @@ class Mean(Stat):
     def get(self) -> Optional[Tensor]:
         return self.rolling_mean
 
-    def init(self):
+    def init(self) -> None:
         self.n = self._get_stat(Count())
 
-    def update(self, x):
+    def update(self, x: Tensor) -> None:
+        assert self.n is not None
         n = self.n.get()
+        assert n is not None
 
-        if self.rolling_mean is None:
+        rolling_mean = self.rolling_mean
+        if rolling_mean is None:
             # Ensures rolling_mean is a float tensor
             self.rolling_mean = x.clone() if x.is_floating_point() else x.double()
         else:
-            delta = x - self.rolling_mean
-            self.rolling_mean += delta / n
+            delta = x - rolling_mean
+            self.rolling_mean = rolling_mean + delta / n
 
 
 class MSE(Stat):
@@ -130,10 +154,11 @@ class MSE(Stat):
 
     def __init__(self, name: Optional[str] = None) -> None:
         super().__init__(name=name)
-        self.prev_mean = None
-        self.mse = None
+        self.prev_mean: Optional[Tensor] = None
+        self.mse: Optional[Tensor] = None
+        self.mean: Optional[Mean] = None
 
-    def init(self):
+    def init(self) -> None:
         self.mean = self._get_stat(Mean())
 
     def get(self) -> Optional[Tensor]:
@@ -141,7 +166,8 @@ class MSE(Stat):
             return torch.zeros_like(self.prev_mean)
         return self.mse
 
-    def update(self, x: Tensor):
+    def update(self, x: Tensor) -> None:
+        assert self.mean is not None
         mean = self.mean.get()
 
         if mean is not None and self.prev_mean is not None:
@@ -151,8 +177,8 @@ class MSE(Stat):
             else:
                 self.mse += rhs
 
-        # do not not clone
-        self.prev_mean = mean.clone()
+        if mean is not None:
+            self.prev_mean = mean.clone()
 
 
 class Var(Stat):
@@ -174,22 +200,28 @@ class Var(Stat):
 
         super().__init__(name=name, order=order)
         self.order = order
+        self.mse_stat: Optional[MSE] = None
+        self.n_stat: Optional[Count] = None
 
-    def init(self):
-        self.mse = self._get_stat(MSE())
-        self.n = self._get_stat(Count())
+    def init(self) -> None:
+        self.mse_stat = self._get_stat(MSE())
+        self.n_stat = self._get_stat(Count())
 
-    def update(self, x: Tensor):
+    def update(self, x: Tensor) -> None:
         pass
 
     def get(self) -> Optional[Tensor]:
-        mse = self.mse.get()
-        n = self.n.get()
+        assert self.mse_stat is not None
+        assert self.n_stat is not None
+        mse = self.mse_stat.get()
+        n_stat = self.n_stat
+        assert n_stat is not None
+        n = n_stat.get()
 
         if mse is None:
             return None
 
-        if n <= self.order:
+        if n is None or n <= self.order:
             return torch.zeros_like(mse)
 
         # NOTE: The following ensures mse is a float tensor.
@@ -214,16 +246,18 @@ class StdDev(Stat):
 
         super().__init__(name=name, order=order)
         self.order = order
+        self.var_stat: Optional[Var] = None
 
-    def init(self):
-        self.var = self._get_stat(Var(order=self.order))
+    def init(self) -> None:
+        self.var_stat = self._get_stat(Var(order=self.order))
 
-    def update(self, x: Tensor):
+    def update(self, x: Tensor) -> None:
         pass
 
     def get(self) -> Optional[Tensor]:
-        var = self.var.get()
-        return var**0.5 if var is not None else None
+        assert self.var_stat is not None
+        var = self.var_stat.get()
+        return torch.pow(var, 0.5) if var is not None else None
 
 
 class GeneralAccumFn(Stat):
@@ -232,15 +266,17 @@ class GeneralAccumFn(Stat):
     where fn is a custom function
     """
 
-    def __init__(self, fn: Callable, name: Optional[str] = None) -> None:
+    def __init__(
+        self, fn: Callable[[Tensor, Tensor], Tensor], name: Optional[str] = None
+    ) -> None:
         super().__init__(name=name)
-        self.result = None
+        self.result: Optional[Tensor] = None
         self.fn = fn
 
     def get(self) -> Optional[Tensor]:
         return self.result
 
-    def update(self, x):
+    def update(self, x: Tensor) -> None:
         if self.result is None:
             self.result = x
         else:
@@ -249,21 +285,27 @@ class GeneralAccumFn(Stat):
 
 class Min(GeneralAccumFn):
     def __init__(
-        self, name: Optional[str] = None, min_fn: Callable = torch.min
+        self,
+        name: Optional[str] = None,
+        min_fn: Callable[[Tensor, Tensor], Tensor] = torch.min,
     ) -> None:
         super().__init__(name=name, fn=min_fn)
 
 
 class Max(GeneralAccumFn):
     def __init__(
-        self, name: Optional[str] = None, max_fn: Callable = torch.max
+        self,
+        name: Optional[str] = None,
+        max_fn: Callable[[Tensor, Tensor], Tensor] = torch.max,
     ) -> None:
         super().__init__(name=name, fn=max_fn)
 
 
 class Sum(GeneralAccumFn):
     def __init__(
-        self, name: Optional[str] = None, add_fn: Callable = torch.add
+        self,
+        name: Optional[str] = None,
+        add_fn: Callable[[Tensor, Tensor], Tensor] = torch.add,
     ) -> None:
         super().__init__(name=name, fn=add_fn)
 

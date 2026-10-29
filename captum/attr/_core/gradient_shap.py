@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import typing
-from typing import Any, Callable, Tuple, Union
+from typing import Callable, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from captum._utils.common import _is_tuple
 from captum._utils.typing import (
     BaselineType,
-    Literal,
     TargetType,
     Tensor,
     TensorOrTupleOfTensorsGeneric,
@@ -55,7 +61,9 @@ class GradientShap(GradientAttribution):
     samples and compute the expectation (smoothgrad).
     """
 
-    def __init__(self, forward_func: Callable, multiply_by_inputs: bool = True) -> None:
+    def __init__(
+        self, forward_func: Callable[..., Tensor], multiply_by_inputs: bool = True
+    ) -> None:
         r"""
         Args:
 
@@ -88,7 +96,7 @@ class GradientShap(GradientAttribution):
         n_samples: int = 5,
         stdevs: Union[float, Tuple[float, ...]] = 0.0,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         *,
         return_convergence_delta: Literal[True],
     ) -> Tuple[TensorOrTupleOfTensorsGeneric, Tensor]: ...
@@ -103,11 +111,13 @@ class GradientShap(GradientAttribution):
         n_samples: int = 5,
         stdevs: Union[float, Tuple[float, ...]] = 0.0,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: Literal[False] = False,
     ) -> TensorOrTupleOfTensorsGeneric: ...
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
+    # pyre-fixme[43]: This definition does not have the same decorators as the
+    #  preceding overload(s).
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
@@ -117,7 +127,7 @@ class GradientShap(GradientAttribution):
         n_samples: int = 5,
         stdevs: Union[float, Tuple[float, ...]] = 0.0,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: bool = False,
     ) -> Union[
         TensorOrTupleOfTensorsGeneric, Tuple[TensorOrTupleOfTensorsGeneric, Tensor]
@@ -250,10 +260,10 @@ class GradientShap(GradientAttribution):
         """
         # since `baselines` is a distribution, we can generate it using a function
         # rather than passing it as an input argument
-        baselines = _format_callable_baseline(baselines, inputs)
-        assert isinstance(baselines[0], torch.Tensor), (
+        formatted_baselines = _format_callable_baseline(baselines, inputs)
+        assert isinstance(formatted_baselines[0], torch.Tensor), (
             "Baselines distribution has to be provided in a form "
-            "of a torch.Tensor {}.".format(baselines[0])
+            "of a torch.Tensor {}.".format(formatted_baselines[0])
         )
 
         input_min_baseline_x_grad = InputBaselineXGradient(
@@ -271,7 +281,7 @@ class GradientShap(GradientAttribution):
             nt_samples=n_samples,
             stdevs=stdevs,
             draw_baseline_from_distrib=True,
-            baselines=baselines,
+            baselines=formatted_baselines,
             target=target,
             additional_forward_args=additional_forward_args,
             return_convergence_delta=return_convergence_delta,
@@ -279,16 +289,29 @@ class GradientShap(GradientAttribution):
 
         return attributions
 
+    # pyre-fixme[24] Generic type `Callable` expects 2 type parameters.
+    def attribute_future(self) -> Callable:
+        r"""
+        This method is not implemented for GradientShap.
+        """
+        raise NotImplementedError(
+            "attribute_future is not implemented for GradientShap"
+        )
+
     def has_convergence_delta(self) -> bool:
         return True
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return self._multiply_by_inputs
 
 
 class InputBaselineXGradient(GradientAttribution):
-    def __init__(self, forward_func: Callable, multiply_by_inputs=True) -> None:
+    _multiply_by_inputs: bool
+
+    def __init__(
+        self, forward_func: Callable[..., Tensor], multiply_by_inputs: bool = True
+    ) -> None:
         r"""
         Args:
 
@@ -318,7 +341,7 @@ class InputBaselineXGradient(GradientAttribution):
         inputs: TensorOrTupleOfTensorsGeneric,
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         *,
         return_convergence_delta: Literal[True],
     ) -> Tuple[TensorOrTupleOfTensorsGeneric, Tensor]: ...
@@ -329,17 +352,17 @@ class InputBaselineXGradient(GradientAttribution):
         inputs: TensorOrTupleOfTensorsGeneric,
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: Literal[False] = False,
     ) -> TensorOrTupleOfTensorsGeneric: ...
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(  # type: ignore
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: bool = False,
     ) -> Union[
         TensorOrTupleOfTensorsGeneric, Tuple[TensorOrTupleOfTensorsGeneric, Tensor]
@@ -347,17 +370,17 @@ class InputBaselineXGradient(GradientAttribution):
         # Keeps track whether original input is a tuple or not before
         # converting it into a tuple.
         is_inputs_tuple = _is_tuple(inputs)
-        inputs, baselines = _format_input_baseline(inputs, baselines)
+        inputs_tuple, baselines = _format_input_baseline(inputs, baselines)
 
         rand_coefficient = torch.tensor(
-            np.random.uniform(0.0, 1.0, inputs[0].shape[0]),
-            device=inputs[0].device,
-            dtype=inputs[0].dtype,
+            np.random.uniform(0.0, 1.0, inputs_tuple[0].shape[0]),
+            device=inputs_tuple[0].device,
+            dtype=inputs_tuple[0].dtype,
         )
 
         input_baseline_scaled = tuple(
             _scale_input(input, baseline, rand_coefficient)
-            for input, baseline in zip(inputs, baselines)
+            for input, baseline in zip(inputs_tuple, baselines)
         )
         grads = self.gradient_func(
             self.forward_func, input_baseline_scaled, target, additional_forward_args
@@ -365,7 +388,7 @@ class InputBaselineXGradient(GradientAttribution):
 
         if self.multiplies_by_inputs:
             input_baseline_diffs = tuple(
-                input - baseline for input, baseline in zip(inputs, baselines)
+                input - baseline for input, baseline in zip(inputs_tuple, baselines)
             )
             attributions = tuple(
                 input_baseline_diff * grad
@@ -374,6 +397,7 @@ class InputBaselineXGradient(GradientAttribution):
         else:
             attributions = grads
 
+        # pyre-fixme[7]: Expected `Union[Tuple[Variable[TensorOrTupleOfTensorsGeneric...
         return _compute_conv_delta_and_format_attrs(
             self,
             return_convergence_delta,
@@ -385,11 +409,20 @@ class InputBaselineXGradient(GradientAttribution):
             is_inputs_tuple,
         )
 
+    # pyre-fixme[24] Generic type `Callable` expects 2 type parameters.
+    def attribute_future(self) -> Callable:
+        r"""
+        This method is not implemented for InputBaseLineXGradient.
+        """
+        raise NotImplementedError(
+            "attribute_future is not implemented for InputBaseLineXGradient"
+        )
+
     def has_convergence_delta(self) -> bool:
         return True
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return self._multiply_by_inputs
 
 

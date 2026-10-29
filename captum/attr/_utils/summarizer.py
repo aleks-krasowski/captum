@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from typing import Dict, List, Optional, Tuple, Type, Union
 
 import torch
-from captum.attr._utils.stat import Count, Max, Mean, Min, MSE, Stat, StdDev, Sum, Var
+from captum.attr._utils.stat import (
+    Count,
+    Max,
+    Mean,
+    Min,
+    MSE,
+    Stat,
+    StatValue,
+    StdDev,
+    Sum,
+    Var,
+)
 from captum.log import log_usage
 from torch import Tensor
 
@@ -26,7 +44,10 @@ class Summarizer:
     >>>print(summ.summary['mean'])
     """
 
-    @log_usage()
+    _stats: List[Stat]
+    _summary_stats_indicies: List[int]
+
+    @log_usage(part_of_slo=False)
     def __init__(self, stats: List[Stat]) -> None:
         r"""
         Args:
@@ -37,12 +58,12 @@ class Summarizer:
         self._is_inputs_tuple: Optional[bool] = None
         self._stats, self._summary_stats_indicies = _reorder_stats(stats)
 
-    def _copy_stats(self):
+    def _copy_stats(self) -> List[Stat]:
         import copy
 
         return copy.deepcopy(self._stats)
 
-    def update(self, x: Union[float, Tensor, Tuple[Union[float, Tensor], ...]]):
+    def update(self, x: Union[float, Tensor, Tuple[Union[float, Tensor], ...]]) -> None:
         r"""
         Calls `update` on each `Stat` object within the summarizer
 
@@ -84,7 +105,7 @@ class Summarizer:
     def summary(
         self,
     ) -> Optional[
-        Union[Dict[str, Optional[Tensor]], List[Dict[str, Optional[Tensor]]]]
+        Union[Dict[str, Optional[StatValue]], List[Dict[str, Optional[StatValue]]]]
     ]:
         r"""
         Effectively calls `get` on each `Stat` object within this object for each input
@@ -121,37 +142,37 @@ def _reorder_stats(stats: List[Stat]) -> Tuple[List[Stat], List[int]]:
     dep_order = [StdDev, Var, MSE, Mean, Count]
 
     # remove dupe stats
-    stats = set(stats)
+    stats_set = set(stats)
     summary_stats = set(stats)
 
     from collections import defaultdict
 
-    stats_by_module: Dict[Type, List[Stat]] = defaultdict(list)
-    for stat in stats:
+    stats_by_module: Dict[Type[Stat], List[Stat]] = defaultdict(list)
+    for stat in stats_set:
         stats_by_module[stat.__class__].append(stat)
 
     # StdDev is an odd case since it is parameterized, thus
     # for each StdDev(order) we must ensure there is an associated Var(order)
     for std_dev in stats_by_module[StdDev]:
         stat_to_add = Var(order=std_dev.order)  # type: ignore
-        stats.add(stat_to_add)
+        stats_set.add(stat_to_add)
         stats_by_module[stat_to_add.__class__].append(stat_to_add)
 
     # For the other modules (deps[1:n-1]): if i exists =>
     # we want to ensure i...n-1 exists
     for i, dep in enumerate(dep_order[1:]):
         if dep in stats_by_module:
-            stats.update([mod() for mod in dep_order[i + 1 :]])
+            stats_set.update([mod() for mod in dep_order[i + 1 :]])
             break
 
     # Step 2: get the correct order
     # NOTE: we are sorting via a given topological order
-    sort_order = {mod: i for i, mod in enumerate(dep_order)}
+    sort_order: Dict[Type[Stat], int] = {mod: i for i, mod in enumerate(dep_order)}
     sort_order[Min] = -1
     sort_order[Max] = -1
     sort_order[Sum] = -1
 
-    stats = list(stats)
+    stats = list(stats_set)
     stats.sort(key=lambda x: sort_order[x.__class__], reverse=True)
 
     # get the summary stat indices
@@ -169,6 +190,10 @@ class SummarizerSingleTensor:
 
     If possible use `Summarizer` instead.
     """
+
+    _stats: List[Stat]
+    _stat_to_stat: Dict[Stat, Stat]
+    _summary_stats: List[Stat]
 
     def __init__(self, stats: List[Stat], summary_stats_indices: List[int]) -> None:
         r"""
@@ -188,7 +213,7 @@ class SummarizerSingleTensor:
             stat._other_stats = self
             stat.init()
 
-    def update(self, x: Tensor):
+    def update(self, x: Tensor) -> None:
         r"""
         Updates the summary of a given tensor `x`
 
@@ -224,7 +249,7 @@ class SummarizerSingleTensor:
         return self._stat_to_stat[stat]
 
     @property
-    def summary(self) -> Dict[str, Optional[Tensor]]:
+    def summary(self) -> Dict[str, Optional[StatValue]]:
         """
         Returns:
             Optional[Dict[str, Optional[Tensor]]]

@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-from typing import Any, Callable, List, Tuple, Union
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+from typing import Callable, List, Optional, Tuple, Union
 
 from captum._utils.gradient import construct_neuron_grad_fn
-from captum._utils.typing import TensorOrTupleOfTensorsGeneric
+from captum._utils.typing import SliceIntType, TensorOrTupleOfTensorsGeneric
 from captum.attr._core.guided_backprop_deconvnet import Deconvolution, GuidedBackprop
 from captum.attr._utils.attribution import GradientAttribution, NeuronAttribution
 from captum.log import log_usage
+from torch import Tensor
 from torch.nn import Module
 
 
@@ -54,12 +62,16 @@ class NeuronDeconvolution(NeuronAttribution, GradientAttribution):
         GradientAttribution.__init__(self, model)
         self.deconv = Deconvolution(model)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        neuron_selector: Union[int, Tuple[Union[int, slice], ...], Callable],
-        additional_forward_args: Any = None,
+        neuron_selector: Union[
+            int,
+            Tuple[Union[int, SliceIntType], ...],
+            Callable[[Union[Tensor, Tuple[Tensor, ...]]], Tensor],
+        ],
+        additional_forward_args: Optional[object] = None,
         attribute_to_neuron_input: bool = False,
     ) -> TensorOrTupleOfTensorsGeneric:
         r"""
@@ -208,12 +220,16 @@ class NeuronGuidedBackprop(NeuronAttribution, GradientAttribution):
         GradientAttribution.__init__(self, model)
         self.guided_backprop = GuidedBackprop(model)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        neuron_selector: Union[int, Tuple[Union[int, slice], ...], Callable],
-        additional_forward_args: Any = None,
+        neuron_selector: Union[
+            int,
+            Tuple[Union[int, SliceIntType], ...],
+            Callable[[Union[Tensor, Tuple[Tensor, ...]]], Tensor],
+        ],
+        additional_forward_args: Optional[object] = None,
         attribute_to_neuron_input: bool = False,
     ) -> TensorOrTupleOfTensorsGeneric:
         r"""

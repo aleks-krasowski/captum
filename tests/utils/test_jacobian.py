@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 import torch
 import torch.nn as nn
 from captum._utils.gradient import (
     _compute_jacobian_wrt_params,
     _compute_jacobian_wrt_params_with_sample_wise_trick,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicLinearModel2, BasicLinearModel_Multilayer
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
+    BasicLinearModel2,
+    BasicLinearModel_Multilayer,
+)
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_jacobian_scores_single_scalar(self) -> None:
         model = BasicLinearModel2(5, 1)

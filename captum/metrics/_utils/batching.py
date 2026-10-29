@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import warnings
 from typing import Callable, Optional, Tuple
 
@@ -10,7 +17,9 @@ from torch import Tensor
 def _divide_and_aggregate_metrics(
     inputs: Tuple[Tensor, ...],
     n_perturb_samples: int,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     metric_func: Callable,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     agg_func: Callable = torch.add,
     max_examples_per_batch: Optional[int] = None,
 ) -> Tensor:
@@ -57,7 +66,8 @@ def _divide_and_aggregate_metrics(
                 "to compute the metrics, contains at least an instance of "
                 "the original example and doesn't exceed the number of "
                 "expanded n_perturb_samples."
-            ).format(max_examples_per_batch, bsz)
+            ).format(max_examples_per_batch, bsz),
+            stacklevel=1,
         )
 
     max_inps_per_batch = (

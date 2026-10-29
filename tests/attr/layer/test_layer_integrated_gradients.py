@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+import unittest
 from typing import Any, cast, List, Tuple, Union
 
 import torch
@@ -11,16 +18,17 @@ from captum.attr._models.base import (
     configure_interpretable_embedding_layer,
     remove_interpretable_embedding_layer,
 )
-from tests.helpers.basic import (
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
     BasicEmbeddingModel,
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_TrueMultiInput,
 )
+from packaging import version
 from torch import Tensor
 from torch.nn import Module
 
@@ -89,6 +97,62 @@ class Test(BaseTest):
             ([[90.0, 100.0, 100.0, 100.0]], [[90.0, 100.0, 100.0, 100.0]]),
         )
 
+    def test_lstm_layer_output_with_state_tuple(self) -> None:
+        class LSTMModel(Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.lstm = torch.nn.LSTM(7, 3, 1, batch_first=True)
+                self.linear = torch.nn.Linear(3, 2)
+
+            def forward(self, input: Tensor) -> Tensor:
+                output, _ = self.lstm(input)
+                return self.linear(output[:, -1, :])
+
+        model = LSTMModel().eval()
+        inputs = torch.randn(4, 5, 7)
+        layer_ig = LayerIntegratedGradients(model, model.lstm)
+
+        attributions, delta = layer_ig.attribute(  # type: ignore[has-type]
+            inputs, target=0, return_convergence_delta=True
+        )
+
+        self.assertEqual(attributions.shape, (4, 5, 3))
+        self.assertEqual(delta.shape, (4,))
+
+    def test_tensor_layer_output_with_non_tensor_metadata(self) -> None:
+        class TensorAndMetadataLayer(Module):
+            def forward(self, input: Tensor) -> Tuple[Tensor, None]:
+                return 2 * input, None
+
+        class TensorAndMetadataModel(Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.layer = TensorAndMetadataLayer()
+
+            def forward(self, input: Tensor) -> Tensor:
+                layer_output, _ = self.layer(input)
+                return 3 * layer_output[:, 0] - 2 * layer_output[:, 1]
+
+        model = TensorAndMetadataModel()
+        inputs = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        baselines = torch.zeros_like(inputs)
+        layer_ig = LayerIntegratedGradients(model, model.layer)
+
+        attributions, delta = layer_ig.attribute(  # type: ignore[has-type]
+            inputs,
+            baselines,
+            return_convergence_delta=True,
+        )
+
+        assertTensorAlmostEqual(
+            self,
+            attributions,
+            [[6.0, -8.0], [18.0, -16.0]],
+            delta=1e-5,
+            mode="max",
+        )
+        assertTensorAlmostEqual(self, delta, [0.0, 0.0], delta=1e-5, mode="max")
+
     def test_multiple_layers_single_inputs(self) -> None:
         input1 = torch.tensor([[2, 5, 0, 1], [3, 1, 1, 0]])
         input2 = torch.tensor([[0, 2, 4, 1], [2, 3, 5, 7]])
@@ -113,14 +177,18 @@ class Test(BaseTest):
 
         net = BasicModel_MultiLayer_TrueMultiInput()
 
+        # pyre-fixme[6]: For 2nd argument expected `ModuleOrModuleList` but got
+        #  `List[Union[BasicModel_MultiLayer, BasicModel_MultiLayer_MultiInput]]`.
         lig = LayerIntegratedGradients(net, layer=[net.m1, net.m234])
         ig = IntegratedGradients(net)
 
         # test layer inputs
-        attribs_inputs = lig.attribute(
+        attribs_inputs = lig.attribute(  # type: ignore[has-type]
             inputs, baseline, target=0, attribute_to_layer_input=True
         )
-        attribs_inputs_regular_ig = ig.attribute(inputs, baseline, target=0)
+        attribs_inputs_regular_ig = ig.attribute(  # type: ignore[has-type]
+            inputs, baseline, target=0
+        )
 
         self.assertIsInstance(attribs_inputs, list)
         self.assertEqual(len(attribs_inputs), 2)
@@ -132,15 +200,16 @@ class Test(BaseTest):
             self,
             # last input for second layer is first input =>
             # add the attributions
-            (attribs_inputs[0] + attribs_inputs[1][-1],) + attribs_inputs[1][0:-1],
+            (attribs_inputs[0] + attribs_inputs[1][-1],)  # type: ignore
+            + attribs_inputs[1][0:-1],  # type: ignore
             attribs_inputs_regular_ig,
             delta=1e-5,
         )
 
         # test layer outputs
-        attribs = lig.attribute(inputs, baseline, target=0)
+        attribs = lig.attribute(inputs, baseline, target=0)  # type: ignore[has-type]
         ig = IntegratedGradients(lambda x, y: x + y)
-        attribs_ig = ig.attribute(
+        attribs_ig = ig.attribute(  # type: ignore[has-type]
             (net.m1(input1), net.m234(input2, input3, input1, 1)),
             (net.m1(baseline[0]), net.m234(baseline[1], baseline[2], baseline[1], 1)),
             target=0,
@@ -159,14 +228,18 @@ class Test(BaseTest):
 
         net = BasicModel_MultiLayer_TrueMultiInput()
 
+        # pyre-fixme[6]: For 2nd argument expected `ModuleOrModuleList` but got
+        #  `List[Union[BasicModel_MultiLayer, BasicModel_MultiLayer_MultiInput]]`.
         lig = LayerIntegratedGradients(net, layer=[net.m1, net.m234])
         ig = IntegratedGradients(net)
 
         # test layer inputs
-        attribs_inputs = lig.attribute(
+        attribs_inputs = lig.attribute(  # type: ignore[has-type]
             inputs, baseline, target=0, attribute_to_layer_input=True
         )
-        attribs_inputs_regular_ig = ig.attribute(inputs, baseline, target=0)
+        attribs_inputs_regular_ig = ig.attribute(  # type: ignore[has-type]
+            inputs, baseline, target=0
+        )
 
         self.assertIsInstance(attribs_inputs, list)
         self.assertEqual(len(attribs_inputs), 2)
@@ -176,15 +249,15 @@ class Test(BaseTest):
 
         assertTensorTuplesAlmostEqual(
             self,
-            (attribs_inputs[0],) + attribs_inputs[1],
+            (attribs_inputs[0],) + attribs_inputs[1],  # type: ignore
             attribs_inputs_regular_ig,
             delta=1e-7,
         )
 
         # test layer outputs
-        attribs = lig.attribute(inputs, baseline, target=0)
+        attribs = lig.attribute(inputs, baseline, target=0)  # type: ignore[has-type]
         ig = IntegratedGradients(lambda x, y: x + y)
-        attribs_ig = ig.attribute(
+        attribs_ig = ig.attribute(  # type: ignore[has-type]
             (net.m1(input1), net.m234(input2, input3, input4, 1)),
             (net.m1(baseline[0]), net.m234(baseline[1], baseline[2], baseline[3], 1)),
             target=0,
@@ -198,18 +271,19 @@ class Test(BaseTest):
         base = torch.tensor([[0.0, 0.0, 0.0]])
         target_layer = net.multi_relu
         layer_ig = LayerIntegratedGradients(net, target_layer)
-        layer_ig_wo_mult_by_inputs = LayerIntegratedGradients(
+        layer_ig_wo_mult_by_inp = LayerIntegratedGradients(
             net, target_layer, multiply_by_inputs=False
         )
         layer_act = LayerActivation(net, target_layer)
-        attributions = layer_ig.attribute(inp, target=0)
-        attributions_wo_mult_by_inputs = layer_ig_wo_mult_by_inputs.attribute(
+        attributions = layer_ig.attribute(inp, target=0)  # type: ignore[has-type]
+        attributions_wo_mult_by_inp = layer_ig_wo_mult_by_inp.attribute(  # type: ignore
             inp, target=0
         )
         inp_minus_baseline_activ = tuple(
             inp_act - base_act
             for inp_act, base_act in zip(
-                layer_act.attribute(inp), layer_act.attribute(base)
+                layer_act.attribute(inp),  # type: ignore[has-type]
+                layer_act.attribute(base),  # type: ignore[has-type]
             )
         )
         assertTensorTuplesAlmostEqual(
@@ -217,11 +291,33 @@ class Test(BaseTest):
             tuple(
                 attr_wo_mult * inp_min_base
                 for attr_wo_mult, inp_min_base in zip(
-                    attributions_wo_mult_by_inputs, inp_minus_baseline_activ
+                    attributions_wo_mult_by_inp, inp_minus_baseline_activ
                 )
             ),
             attributions,
         )
+
+    def test_simple_multi_gradient_activation_with_unused_layer(self) -> None:
+        if version.parse(torch.__version__) < version.parse("2.1.0"):
+            raise unittest.SkipTest(
+                "Skipping unused layed gradient test since it is not supported "
+                "by torch version < 2.1"
+            )
+
+        model = BasicModel_MultiLayer(multi_input_module=True)
+        test_input = torch.tensor([[3.0, 4.0, 0.0]], requires_grad=True)
+        # pyre-fixme[6]: For 2nd argument expected `ModuleOrModuleList` but got
+        #  `List[Union[ReLU, Linear]]`.
+        layer_ig = LayerIntegratedGradients(model, [model.linear1, model.relu])
+        attributions = cast(
+            List[Tensor],
+            layer_ig.attribute(  # type: ignore[has-type]
+                inputs=test_input, target=0, grad_kwargs={"materialize_grads": True}
+            ),
+        )
+        self.assertEqual(len(attributions), 2)
+        self.assertEqual(list(attributions[0].shape), [1, 4])
+        self.assertEqual(list(attributions[1].shape), [1, 4])
 
     def _assert_compare_with_layer_conductance(
         self, model: Module, input: Tensor, attribute_to_layer_input: bool = False
@@ -229,7 +325,7 @@ class Test(BaseTest):
         lc = LayerConductance(model, cast(Module, model.linear2))
         # For large number of steps layer conductance and layer integrated gradients
         # become very close
-        attribution, delta = lc.attribute(
+        attribution, delta = lc.attribute(  # type: ignore[has-type]
             input,
             target=0,
             n_steps=1500,
@@ -237,7 +333,7 @@ class Test(BaseTest):
             attribute_to_layer_input=attribute_to_layer_input,
         )
         lig = LayerIntegratedGradients(model, cast(Module, model.linear2))
-        attributions2, delta2 = lig.attribute(
+        attributions2, delta2 = lig.attribute(  # type: ignore[has-type]
             input,
             target=0,
             n_steps=1500,
@@ -270,7 +366,7 @@ class Test(BaseTest):
                 model, model.embedding1, multiply_by_inputs=multiply_by_inputs
             )
 
-        attributions, delta = lig.attribute(
+        attributions, delta = lig.attribute(  # type: ignore[has-type]
             input,
             baselines=baseline,
             additional_forward_args=additional_args,
@@ -297,7 +393,7 @@ class Test(BaseTest):
             baseline_emb = (e1_baseline_emb, e2_baseline_emb)
 
         ig = IntegratedGradients(model, multiply_by_inputs=multiply_by_inputs)
-        attributions_with_ig, delta_with_ig = ig.attribute(
+        attributions_with_ig, delta_with_ig = ig.attribute(  # type: ignore[has-type]
             input_emb,
             baselines=baseline_emb,
             additional_forward_args=additional_args,
@@ -343,7 +439,7 @@ class Test(BaseTest):
         additional_input: Any = None,
     ) -> None:
         layer_ig = LayerIntegratedGradients(model, target_layer)
-        attributions = layer_ig.attribute(
+        attributions = layer_ig.attribute(  # type: ignore[has-type]
             test_input, target=0, additional_forward_args=additional_input
         )
         assertTensorTuplesAlmostEqual(self, attributions, expected_ig, delta=0.01)

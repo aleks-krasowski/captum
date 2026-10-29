@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from copy import deepcopy
 from inspect import signature
 from typing import Any, Callable, cast, Optional, Tuple, Union
@@ -8,6 +15,7 @@ import torch
 from captum._utils.common import (
     _expand_and_update_additional_forward_args,
     _expand_and_update_baselines,
+    _expand_and_update_feature_mask,
     _expand_and_update_target,
     _format_baseline,
     _format_tensor_into_tuples,
@@ -45,22 +53,24 @@ def default_perturb_func(
                 original inputs.
 
     """
-    inputs = _format_tensor_into_tuples(inputs)
+    inputs_tuple = _format_tensor_into_tuples(inputs)
     perturbed_input = tuple(
         input
         + torch.FloatTensor(input.size())  # type: ignore
         .uniform_(-perturb_radius, perturb_radius)
         .to(input.device)
-        for input in inputs
+        for input in inputs_tuple
     )
     return perturbed_input
 
 
-@log_usage()
+@log_usage(part_of_slo=True)
 def sensitivity_max(
-    explanation_func: Callable,
+    explanation_func: Callable[..., TensorOrTupleOfTensorsGeneric],
     inputs: TensorOrTupleOfTensorsGeneric,
-    perturb_func: Callable = default_perturb_func,
+    perturb_func: Callable[
+        ..., Union[Tensor, Tuple[Tensor, ...]]
+    ] = default_perturb_func,
     perturb_radius: float = 0.02,
     n_perturb_samples: int = 10,
     norm_ord: str = "fro",
@@ -174,7 +184,8 @@ def sensitivity_max(
                 Any additional arguments that need be passed to the explanation
                 function should be included here.
                 For instance, such arguments include:
-                `additional_forward_args`, `baselines` and `target`.
+                `additional_forward_args`, `baselines`, `target`,
+                and `feature_mask`.
 
     Returns:
 
@@ -197,7 +208,7 @@ def sensitivity_max(
 
     def _generate_perturbations(
         current_n_perturb_samples: int,
-    ) -> TensorOrTupleOfTensorsGeneric:
+    ) -> Union[Tensor, Tuple[Tensor, ...]]:
         r"""
         The perturbations are generated for each example
         `current_n_perturb_samples` times.
@@ -223,7 +234,7 @@ def sensitivity_max(
         return torch.max(input_tnsr, dim=1).values  # type: ignore
 
     kwarg_expanded_for = None
-    kwargs_copy: Any = None
+    kwargs_copy: object = None
 
     def _next_sensitivity_max(current_n_perturb_samples: int) -> Tensor:
         inputs_perturbed = _generate_perturbations(current_n_perturb_samples)
@@ -241,6 +252,7 @@ def sensitivity_max(
                 current_n_perturb_samples, kwargs_copy
             )
             _expand_and_update_target(current_n_perturb_samples, kwargs_copy)
+            _expand_and_update_feature_mask(current_n_perturb_samples, kwargs_copy)
             if "baselines" in kwargs:
                 baselines = kwargs["baselines"]
                 baselines = _format_baseline(
@@ -248,7 +260,7 @@ def sensitivity_max(
                 )
                 if (
                     isinstance(baselines[0], Tensor)
-                    and baselines[0].shape == inputs[0].shape
+                    and cast(Tensor, baselines[0]).shape == inputs[0].shape
                 ):
                     _expand_and_update_baselines(
                         cast(Tuple[Tensor, ...], inputs),
@@ -270,7 +282,8 @@ def sensitivity_max(
             [
                 (expl_input - expl_perturbed).view(expl_perturbed.size(0), -1)
                 for expl_perturbed, expl_input in zip(
-                    expl_perturbed_inputs, expl_inputs_expanded
+                    expl_perturbed_inputs,
+                    expl_inputs_expanded,
                 )
             ],
             dim=1,
@@ -304,10 +317,10 @@ def sensitivity_max(
 
     inputs = _format_tensor_into_tuples(inputs)  # type: ignore
 
-    bsz = inputs[0].size(0)
+    bsz: int = inputs[0].size(0)
 
     with torch.no_grad():
-        expl_inputs = explanation_func(inputs, **kwargs)
+        expl_inputs: TensorOrTupleOfTensorsGeneric = explanation_func(inputs, **kwargs)
         metrics_max = _divide_and_aggregate_metrics(
             cast(Tuple[Tensor, ...], inputs),
             n_perturb_samples,

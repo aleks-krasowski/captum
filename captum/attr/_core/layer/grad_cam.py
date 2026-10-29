@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -52,7 +59,7 @@ class LayerGradCam(LayerAttribution, GradientAttribution):
 
     def __init__(
         self,
-        forward_func: Callable,
+        forward_func: Callable[..., Tensor],
         layer: Module,
         device_ids: Union[None, List[int]] = None,
     ) -> None:
@@ -74,12 +81,12 @@ class LayerGradCam(LayerAttribution, GradientAttribution):
         LayerAttribution.__init__(self, forward_func, layer, device_ids)
         GradientAttribution.__init__(self, forward_func)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         attribute_to_layer_input: bool = False,
         relu_attributions: bool = False,
         attr_dim_summation: bool = True,
@@ -198,7 +205,7 @@ class LayerGradCam(LayerAttribution, GradientAttribution):
         # hidden layer and hidden layer evaluated at each input.
         layer_gradients, layer_evals = compute_layer_gradients_and_eval(
             self.forward_func,
-            self.layer,
+            cast(Module, self.layer),
             inputs,
             target,
             additional_forward_args,

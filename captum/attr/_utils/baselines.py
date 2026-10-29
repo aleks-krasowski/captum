@@ -1,4 +1,9 @@
-# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import random
 from typing import Any, Dict, List, Tuple, Union
 
@@ -24,13 +29,14 @@ class ProductBaselines:
             List[List[Any]],
             Dict[Union[str, Tuple[str, ...]], List[Any]],
         ],
-    ):
+    ) -> None:
         if isinstance(baseline_values, dict):
             dict_keys = list(baseline_values.keys())
             baseline_values = [baseline_values[k] for k in dict_keys]
         else:
             dict_keys = []
 
+        # pyre-fixme[4]: Attribute must be annotated.
         self.dict_keys = dict_keys
         self.baseline_values = baseline_values
 

@@ -1,7 +1,25 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import functools
 import warnings
-from typing import Any, Callable, cast, List, overload, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    cast,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    overload,
+    Tuple,
+    Union,
+)
 
 import torch
 from captum._utils.common import (
@@ -10,7 +28,7 @@ from captum._utils.common import (
     _format_outputs,
 )
 from captum._utils.gradient import _forward_layer_eval, _run_forward
-from captum._utils.typing import BaselineType, Literal, ModuleOrModuleList, TargetType
+from captum._utils.typing import BaselineType, ModuleOrModuleList, TargetType
 from captum.attr._core.integrated_gradients import IntegratedGradients
 from captum.attr._utils.attribution import GradientAttribution, LayerAttribution
 from captum.attr._utils.common import (
@@ -20,6 +38,7 @@ from captum.attr._utils.common import (
 )
 from captum.log import log_usage
 from torch import Tensor
+from torch.nn import Module
 from torch.nn.parallel.scatter_gather import scatter
 
 
@@ -45,7 +64,7 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
 
     def __init__(
         self,
-        forward_func: Callable,
+        forward_func: Callable[..., Tensor],
         layer: ModuleOrModuleList,
         device_ids: Union[None, List[int]] = None,
         multiply_by_inputs: bool = True,
@@ -106,49 +125,190 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
                 stacklevel=2,
             )
 
+    def _make_gradient_func(
+        self,
+        num_outputs_cumsum: Tensor,
+        attribute_to_layer_input: bool,
+        grad_kwargs: Optional[Dict[str, Any]],
+    ) -> Callable[..., Tuple[Tensor, ...]]:
+
+        def _gradient_func(
+            forward_fn: Callable[..., Tensor],
+            inputs: Union[Tensor, Tuple[Tensor, ...]],
+            target_ind: TargetType = None,
+            additional_forward_args: Optional[object] = None,
+        ) -> Tuple[Tensor, ...]:
+            if self.device_ids is None or len(self.device_ids) == 0:
+                scattered_inputs = (inputs,)
+            else:
+                # scatter method does not have a precise enough return type in its
+                # stub, so suppress the type warning.
+                scattered_inputs = scatter(  # type: ignore
+                    # pyre-fixme[6]: For 1st argument expected `Tensor` but got
+                    #  `Union[Tensor, typing.Tuple[Tensor, ...]]`.
+                    inputs,
+                    target_gpus=self.device_ids,
+                )
+
+            scattered_inputs_dict: Dict[
+                torch.device, Union[Tensor, Tuple[Tensor, ...]]
+            ] = {
+                scattered_input[0].device: scattered_input
+                for scattered_input in scattered_inputs
+            }
+
+            with torch.autograd.set_grad_enabled(True):
+
+                def layer_forward_hook(
+                    module: Module,
+                    hook_inputs: Union[Tensor, Tuple[Tensor, ...]],
+                    hook_outputs: Union[None, Tensor, Tuple[Tensor, ...]] = None,
+                    layer_idx: int = 0,
+                ) -> Union[Tensor, Tuple[Tensor, ...]]:
+                    device = _extract_device(module, hook_inputs, hook_outputs)
+                    is_layer_tuple = (
+                        isinstance(hook_outputs, tuple)
+                        # hook_outputs is None if attribute_to_layer_input == True
+                        if hook_outputs is not None
+                        else isinstance(hook_inputs, tuple)
+                    )
+
+                    if is_layer_tuple:
+                        replacement_outputs = scattered_inputs_dict[device][
+                            num_outputs_cumsum[layer_idx] : num_outputs_cumsum[
+                                layer_idx + 1
+                            ]
+                        ]
+                        if hook_outputs is not None and isinstance(
+                            hook_outputs, (tuple, list)
+                        ):
+                            replacement_output_iter = iter(replacement_outputs)
+                            replaced_outputs = [
+                                (
+                                    next(replacement_output_iter)
+                                    if isinstance(hook_output, Tensor)
+                                    else hook_output
+                                )
+                                for hook_output in hook_outputs
+                            ]
+                            return cast(
+                                Union[Tensor, Tuple[Tensor, ...]],
+                                (
+                                    tuple(replaced_outputs)
+                                    if isinstance(hook_outputs, tuple)
+                                    else replaced_outputs
+                                ),
+                            )
+                        return cast(
+                            Union[Tensor, Tuple[Tensor, ...]],
+                            replacement_outputs,
+                        )
+
+                    return scattered_inputs_dict[device][num_outputs_cumsum[layer_idx]]
+
+                hooks = []
+                try:
+
+                    layers = self.layer
+                    if not isinstance(layers, list):
+                        layers = [self.layer]
+
+                    for layer_idx, layer in enumerate(layers):
+                        hook = None
+                        # TODO:
+                        # Allow multiple attribute_to_layer_input flags for
+                        # each layer, i.e. attribute_to_layer_input[layer_idx]
+                        if attribute_to_layer_input:
+                            hook = layer.register_forward_pre_hook(
+                                functools.partial(
+                                    layer_forward_hook, layer_idx=layer_idx
+                                )
+                            )
+                        else:
+                            hook = layer.register_forward_hook(
+                                functools.partial(
+                                    layer_forward_hook, layer_idx=layer_idx
+                                )
+                            )
+
+                        hooks.append(hook)
+
+                    # the inputs is an empty tuple
+                    # coz it is prepended into additional_forward_args
+                    output = _run_forward(
+                        self.forward_func, (), target_ind, additional_forward_args
+                    )
+                finally:
+                    for hook in hooks:
+                        if hook is not None:
+                            hook.remove()
+
+                # _run_forward may return future of Tensor,
+                # but we don't support it here now
+                # And it will fail before here.
+                output = cast(Tensor, output)
+                assert output[0].numel() == 1, (
+                    "Target not provided when necessary, cannot"
+                    " take gradient with respect to multiple outputs."
+                )
+                # torch.unbind(forward_out) is a list of scalar tensor tuples and
+                # contains batch_size * #steps elements
+                grads = torch.autograd.grad(
+                    torch.unbind(output), inputs, **grad_kwargs or {}
+                )
+            return grads
+
+        return _gradient_func
+
     @overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType,
         target: TargetType,
-        additional_forward_args: Any,
+        additional_forward_args: Optional[object],
         n_steps: int,
         method: str,
         internal_batch_size: Union[None, int],
         return_convergence_delta: Literal[False],
         attribute_to_layer_input: bool,
+        grad_kwargs: Optional[Dict[str, Any]],
     ) -> Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]]: ...
 
     @overload
-    def attribute(
+    @log_usage(part_of_slo=True)
+    def attribute(  # type: ignore
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType,
         target: TargetType,
-        additional_forward_args: Any,
+        additional_forward_args: Optional[object],
         n_steps: int,
         method: str,
         internal_batch_size: Union[None, int],
         return_convergence_delta: Literal[True],
         attribute_to_layer_input: bool,
+        grad_kwargs: Optional[Dict[str, Any]],
     ) -> Tuple[
         Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]],
         Tensor,
     ]: ...
 
     @overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
         return_convergence_delta: bool = False,
         attribute_to_layer_input: bool = False,
+        grad_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[
         Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]],
         Tuple[
@@ -157,18 +317,19 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
         ],
     ]: ...
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
         return_convergence_delta: bool = False,
         attribute_to_layer_input: bool = False,
+        grad_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[
         Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]],
         Tuple[
@@ -304,6 +465,9 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
                         attribute to the input or output, is a single tensor.
                         Support for multiple tensors will be added later.
                         Default: False
+            grad_kwargs (Dict[str, Any], optional): Additional keyword
+                        arguments for torch.autograd.grad.
+                        Default: None
 
         Returns:
             **attributions** or 2-element tuple of **attributions**, **delta**:
@@ -358,9 +522,22 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
             additional_forward_args
         )
 
-        def flatten_tuple(tup):
+        def flatten_tuple(tup: List[Tuple[Tensor, ...]]) -> Tuple[Tensor, ...]:
             return tuple(
-                sum((list(x) if isinstance(x, (tuple, list)) else [x] for x in tup), [])
+                cast(
+                    List[Tensor],
+                    sum(
+                        (
+                            (
+                                list(x)
+                                if isinstance(x, (tuple, list))
+                                else cast(List[Tensor], [x])
+                            )
+                            for x in tup
+                        ),
+                        [],
+                    ),
+                )
             )
 
         if self.device_ids is None:
@@ -374,16 +551,18 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
             additional_forward_args=additional_forward_args,
             attribute_to_layer_input=attribute_to_layer_input,
         )
-
+        input_layer_list: List[Tuple[Tensor, ...]]
         # if we have one output
         if not isinstance(self.layer, list):
-            inputs_layer = (inputs_layer,)
+            input_layer_list = [cast(Tuple[Tensor, ...], inputs_layer)]
+        else:
+            input_layer_list = inputs_layer
 
-        num_outputs = [1 if isinstance(x, Tensor) else len(x) for x in inputs_layer]
+        num_outputs = [1 if isinstance(x, Tensor) else len(x) for x in input_layer_list]
         num_outputs_cumsum = torch.cumsum(
             torch.IntTensor([0] + num_outputs), dim=0  # type: ignore
         )
-        inputs_layer = flatten_tuple(inputs_layer)
+        inputs_layer = flatten_tuple(input_layer_list)
 
         baselines_layer = _forward_layer_eval(
             self.forward_func,
@@ -396,99 +575,10 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
         baselines_layer = flatten_tuple(baselines_layer)
 
         # inputs -> these inputs are scaled
-        def gradient_func(
-            forward_fn: Callable,
-            inputs: Union[Tensor, Tuple[Tensor, ...]],
-            target_ind: TargetType = None,
-            additional_forward_args: Any = None,
-        ) -> Tuple[Tensor, ...]:
-            if self.device_ids is None or len(self.device_ids) == 0:
-                scattered_inputs = (inputs,)
-            else:
-                # scatter method does not have a precise enough return type in its
-                # stub, so suppress the type warning.
-                scattered_inputs = scatter(  # type:ignore
-                    inputs, target_gpus=self.device_ids
-                )
 
-            scattered_inputs_dict = {
-                scattered_input[0].device: scattered_input
-                for scattered_input in scattered_inputs
-            }
-
-            with torch.autograd.set_grad_enabled(True):
-
-                def layer_forward_hook(
-                    module, hook_inputs, hook_outputs=None, layer_idx=0
-                ):
-                    device = _extract_device(module, hook_inputs, hook_outputs)
-                    is_layer_tuple = (
-                        isinstance(hook_outputs, tuple)
-                        # hook_outputs is None if attribute_to_layer_input == True
-                        if hook_outputs is not None
-                        else isinstance(hook_inputs, tuple)
-                    )
-
-                    if is_layer_tuple:
-                        return scattered_inputs_dict[device][
-                            num_outputs_cumsum[layer_idx] : num_outputs_cumsum[
-                                layer_idx + 1
-                            ]
-                        ]
-
-                    return scattered_inputs_dict[device][num_outputs_cumsum[layer_idx]]
-
-                hooks = []
-                try:
-
-                    layers = self.layer
-                    if not isinstance(layers, list):
-                        layers = [self.layer]
-
-                    for layer_idx, layer in enumerate(layers):
-                        hook = None
-                        # TODO:
-                        # Allow multiple attribute_to_layer_input flags for
-                        # each layer, i.e. attribute_to_layer_input[layer_idx]
-                        if attribute_to_layer_input:
-                            hook = layer.register_forward_pre_hook(
-                                functools.partial(
-                                    layer_forward_hook, layer_idx=layer_idx
-                                )
-                            )
-                        else:
-                            hook = layer.register_forward_hook(
-                                functools.partial(
-                                    layer_forward_hook, layer_idx=layer_idx
-                                )
-                            )
-
-                        hooks.append(hook)
-
-                    # the inputs is an empty tuple
-                    # coz it is prepended into additional_forward_args
-                    output = _run_forward(
-                        self.forward_func, (), target_ind, additional_forward_args
-                    )
-                finally:
-                    for hook in hooks:
-                        if hook is not None:
-                            hook.remove()
-
-                # _run_forward may return future of Tensor,
-                # but we don't support it here now
-                # And it will fail before here.
-                output = cast(Tensor, output)
-                assert output[0].numel() == 1, (
-                    "Target not provided when necessary, cannot"
-                    " take gradient with respect to multiple outputs."
-                )
-                # torch.unbind(forward_out) is a list of scalar tensor tuples and
-                # contains batch_size * #steps elements
-                grads = torch.autograd.grad(torch.unbind(output), inputs)
-            return grads
-
-        self.ig.gradient_func = gradient_func
+        self.ig.gradient_func = self._make_gradient_func(
+            num_outputs_cumsum, attribute_to_layer_input, grad_kwargs
+        )
         all_inputs = (
             (inps + additional_forward_args)
             if additional_forward_args is not None
@@ -534,5 +624,5 @@ class LayerIntegratedGradients(LayerAttribution, GradientAttribution):
         return True
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return self.ig.multiplies_by_inputs

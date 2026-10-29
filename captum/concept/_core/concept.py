@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+
 from typing import Callable, Union
 
 import torch
@@ -70,6 +76,8 @@ class ConceptInterpreter:
         """
         self.model = model
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    # pyre-fixme[13]: Attribute `interpret` is never initialized.
     interpret: Callable
     r"""
     An abstract interpret method that performs concept-based model interpretability

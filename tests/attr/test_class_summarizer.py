@@ -1,15 +1,30 @@
 #!/usr/bin/env python3
-from typing import List
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+from typing import List, Optional, Tuple, Union
 
 import torch
 from captum.attr import ClassSummarizer, CommonStats
-from tests.helpers import BaseTest
+from captum.testing.helpers import BaseTest
+from torch import Tensor
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
-    def class_test(self, data, classes, x_sizes) -> None:
+    def class_test(
+        self,
+        data: List[Tuple[Tuple[Tensor, ...], object]],
+        classes: List[object],
+        x_sizes: Tuple[Tuple[int, ...], ...],
+    ) -> None:
         summarizer = ClassSummarizer(stats=CommonStats())
         for x, y in data:
+            # pyrefly: ignore [bad-argument-type]
             summarizer.update(x, y)
 
         summ = summarizer.summary
@@ -18,6 +33,7 @@ class Test(BaseTest):
         for s, size in zip(summ, x_sizes):
             self.assertIsInstance(s, dict)
             for key in s:
+                # pyrefly: ignore [missing-attribute]
                 self.assertEqual(s[key].size(), size)
 
         self.assertIsNotNone(summarizer.class_summaries)
@@ -36,6 +52,7 @@ class Test(BaseTest):
             for s, size in zip(summ, x_sizes):
                 self.assertIsInstance(s, dict)
                 for key in s:
+                    # pyrefly: ignore [missing-attribute]
                     self.assertEqual(s[key].size(), size)
 
         self.assertEqual(len(all_keys), 0)
@@ -47,7 +64,7 @@ class Test(BaseTest):
             ((3, 2, 10, 3), (1,)),
             # ((20,),),
         ]
-        list_of_classes: List[List] = [
+        list_of_classes: List[List[object]] = [
             list(range(100)),
             ["%d" % i for i in range(100)],
             list(range(300, 400)),
@@ -55,7 +72,11 @@ class Test(BaseTest):
         for batch_size in [None, 1, 4]:
             for sizes, classes in zip(sizes_to_test, list_of_classes):
 
-                def create_batch_labels(batch_idx):
+                def create_batch_labels(
+                    batch_idx: int,
+                    batch_size: Optional[int] = batch_size,
+                    classes: List[object] = classes,
+                ) -> Union[object, List[object]]:
                     if batch_size is None:
                         # batch_size = 1
                         return classes[batch_idx]
@@ -91,6 +112,7 @@ class Test(BaseTest):
         self.assertIsNotNone(summ)
         self.assertIsInstance(summ, dict)
         for key in summ:
+            # pyrefly: ignore [missing-attribute]
             self.assertTrue(summ[key].size() == size)
 
         self.assertIsNotNone(summarizer.class_summaries)
@@ -105,6 +127,7 @@ class Test(BaseTest):
 
         for label in single_labels:
             summarizer = ClassSummarizer(stats=CommonStats())
+            # pyrefly: ignore [bad-argument-type]
             summarizer.update(data, label)
             summ1 = summarizer.summary
             summ2 = summarizer.class_summaries
@@ -116,6 +139,8 @@ class Test(BaseTest):
 
             self.assertIsInstance(summ2, dict)
             self.assertTrue(label in summ2)
+            # pyrefly: ignore [bad-argument-type]
             self.assertTrue(len(summ1) == len(summ2[label]))
             for key in summ1[0].keys():
+                # pyrefly: ignore [bad-index, missing-attribute, unsupported-operation]
                 self.assertTrue((summ1[0][key] == summ2[label][0][key]).all())

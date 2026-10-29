@@ -1,8 +1,13 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 import tempfile
 from typing import Callable, List, Optional, Tuple
 
 import torch
-
 import torch.nn as nn
 from captum.influence._core.influence_function import NaiveInfluenceFunction
 from captum.influence._utils.common import (
@@ -11,10 +16,12 @@ from captum.influence._utils.common import (
     _functional_call,
     _unflatten_params_factory,
 )
-from parameterized import parameterized
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual, assertTensorTuplesAlmostEqual
-from tests.helpers.influence.common import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import (
+    assertTensorAlmostEqual,
+    assertTensorTuplesAlmostEqual,
+)
+from captum.testing.helpers.influence.common import (
     _format_batch_into_tuple,
     build_test_name_func,
     DataInfluenceConstructor,
@@ -24,9 +31,10 @@ from tests.helpers.influence.common import (
     Linear,
     UnpackDataset,
 )
+from parameterized import parameterized
 from torch.utils.data import DataLoader
 
-# TODO: for some unknow reason, this test does not work
+# TODO: for some unknown reason, this test does not work
 # on `cuda_data_parallel` setting. We need to investigate why.
 # Use a local version of setting list for these two tests for now
 # since we have changed the default setting list to includes all options.
@@ -38,6 +46,7 @@ gpu_settings_list = (
 )
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestNaiveInfluence(BaseTest):
     def setUp(self) -> None:
         super().setUp()
@@ -131,6 +140,7 @@ class TestNaiveInfluence(BaseTest):
         error loss.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,

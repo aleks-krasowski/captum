@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from typing import cast, List, Tuple
 
 import torch
@@ -12,7 +19,8 @@ from captum._utils.common import (
     parse_version,
     safe_div,
 )
-from tests.helpers.basic import (
+from captum.attr._utils.common import get_total_features_from_mask
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
@@ -171,6 +179,16 @@ class Test(BaseTest):
         )
 
         assert _get_max_feature_index(mask) == 100
+
+    def test_mask_unique_elem(self) -> None:
+        res = get_total_features_from_mask((torch.tensor([0, 0, 0]),))
+        self.assertEqual(res, 1)
+        res = get_total_features_from_mask((torch.tensor([0, 0, 4]),))
+        self.assertEqual(res, 2)
+        res = get_total_features_from_mask(
+            (torch.tensor([0, 0, 4]), torch.tensor([0, 4, 5]))
+        )
+        self.assertEqual(res, 3)
 
 
 class TestParseVersion(BaseTest):

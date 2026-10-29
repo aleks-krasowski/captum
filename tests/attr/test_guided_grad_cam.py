@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
-from typing import Any, List, Tuple, Union
+from typing import Any, Tuple, Union
 
 import torch
-from captum._utils.typing import TensorOrTupleOfTensorsGeneric
+from captum._utils.typing import TensorLikeList, TensorOrTupleOfTensorsGeneric
 from captum.attr._core.guided_grad_cam import GuidedGradCam
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel_ConvNet_One_Conv
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicModel_ConvNet_One_Conv
 from torch import Tensor
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_simple_input_conv(self) -> None:
         net = BasicModel_ConvNet_One_Conv()
@@ -108,7 +116,7 @@ class Test(BaseTest):
         model: Module,
         target_layer: Module,
         test_input: TensorOrTupleOfTensorsGeneric,
-        expected: Union[Tensor, List, Tuple],
+        expected: Union[Tensor, TensorLikeList, Tuple[TensorLikeList, ...]],
         additional_input: Any = None,
         interpolate_mode: str = "nearest",
         attribute_to_layer_input: bool = False,

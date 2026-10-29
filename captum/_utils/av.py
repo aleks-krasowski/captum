@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import glob
 import os
 import re
@@ -66,18 +73,21 @@ class AV:
                     which the activation vectors are computed
             """
 
+            # pyre-fixme[4]: Attribute must be annotated.
             self.av_filesearch = AV._construct_file_search(
                 path, model_id, identifier, layer, num_id
             )
 
             files = glob.glob(self.av_filesearch)
 
+            # pyre-fixme[4]: Attribute must be annotated.
             self.files = AV.sort_files(files)
 
+        # pyrefly: ignore [bad-override-param-name]
         def __getitem__(self, idx: int) -> Union[Tensor, Tuple[Tensor, ...]]:
             assert idx < len(self.files), "Layer index is out of bounds!"
             fl = self.files[idx]
-            av = torch.load(fl)
+            av = torch.load(fl, weights_only=True)
             return av
 
         def __len__(self) -> int:
@@ -326,7 +336,8 @@ class AV:
                 "Overwriting activations: load_from_disk is set to False. Removing all "
                 f"activations matching specified parameters {{path: {path}, "
                 f"model_id: {model_id}, layers: {layers}, identifier: {identifier}}} "
-                "before generating new activations."
+                "before generating new activations.",
+                stacklevel=1,
             )
             for layer in layers:
                 files = glob.glob(
@@ -346,7 +357,7 @@ class AV:
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         identifier: str,
         num_id: str,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         load_from_disk: bool = True,
     ) -> None:
         r"""
@@ -490,6 +501,8 @@ class AV:
         lexigraphical sort.
         """
 
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def split_alphanum(s):
             r"""
             Splits string into a list of strings and numbers

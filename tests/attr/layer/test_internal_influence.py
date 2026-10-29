@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 import unittest
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from captum._utils.typing import BaselineType
 from captum.attr._core.layer.internal_influence import InternalInfluence
-from packaging import version
-from tests.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest
+from captum.testing.helpers.basic_models import (
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_MultiInput,
 )
+from packaging import version
 from torch import Tensor
 from torch.nn import Module
 

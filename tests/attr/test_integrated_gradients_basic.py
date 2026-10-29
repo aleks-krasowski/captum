@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
-from typing import Any, cast, Optional, Tuple, Union
+from typing import cast, Optional, Tuple, Union
 
 import torch
 from captum._utils.common import _zeros
@@ -9,9 +16,9 @@ from captum._utils.typing import BaselineType, Tensor, TensorOrTupleOfTensorsGen
 from captum.attr._core.integrated_gradients import IntegratedGradients
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._utils.common import _tensorize_baseline
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
     BasicModel,
     BasicModel2,
     BasicModel3,
@@ -23,6 +30,7 @@ from tests.helpers.basic_models import (
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_multivariable_vanilla(self) -> None:
         self._assert_multi_variable("vanilla", "riemann_right")
@@ -153,6 +161,33 @@ class Test(BaseTest):
 
     def test_batched_multi_input_smoothgrad_sq_batch_size_3(self) -> None:
         self._assert_batched_tensor_multi_input("vargrad", "riemann_trapezoid", 3)
+
+    def test_futures_not_implemented(self) -> None:
+        model = BasicModel2()
+        ig = IntegratedGradients(model, multiply_by_inputs=True)
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = ig.attribute_future()  # type: ignore
+        self.assertEqual(attributions, None)
+
+    def test_noise_tunnel_delta_order_with_nt_samples_batch_size(self) -> None:
+        # riemann_left on a cubic gives a different, non-zero delta per example
+        inputs = torch.tensor([[1.0, 2.0], [-3.0, 0.5], [2.5, -1.0]])
+        nt = NoiseTunnel(IntegratedGradients(lambda x: (x**3).sum(dim=1)))
+        kwargs = dict(
+            nt_type="smoothgrad",
+            nt_samples=4,
+            stdevs=0.0,
+            n_steps=2,
+            method="riemann_left",
+            return_convergence_delta=True,
+        )
+        _, expected_delta = nt.attribute(inputs, **kwargs)
+        for nt_samples_batch_size in (1, 2, 3):
+            _, delta = nt.attribute(
+                inputs, nt_samples_batch_size=nt_samples_batch_size, **kwargs
+            )
+            assertTensorAlmostEqual(self, delta, expected_delta, delta=0.0)
 
     def _assert_multi_variable(
         self,
@@ -384,30 +419,32 @@ class Test(BaseTest):
         inputs: TensorOrTupleOfTensorsGeneric,
         baselines: BaselineType = None,
         target: Union[None, int] = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         type: str = "vanilla",
         approximation_method: str = "gausslegendre",
         multiply_by_inputs: bool = True,
-        nt_samples_batch_size=None,
+        nt_samples_batch_size: Optional[int] = None,
     ) -> Tuple[Tensor, ...]:
         r"""
         attrib_type: 'vanilla', 'smoothgrad', 'smoothgrad_sq', 'vargrad'
         """
         ig = IntegratedGradients(model, multiply_by_inputs=multiply_by_inputs)
         self.assertEqual(ig.multiplies_by_inputs, multiply_by_inputs)
+        inputs_tuple: Tuple[Tensor, ...]
         if not isinstance(inputs, tuple):
-            inputs = (inputs,)  # type: ignore
-        inputs: Tuple[Tensor, ...]
+            inputs_tuple = (cast(Tensor, inputs),)
+        else:
+            inputs_tuple = inputs
 
         if baselines is not None and not isinstance(baselines, tuple):
             baselines = (baselines,)
 
         if baselines is None:
-            baselines = _tensorize_baseline(inputs, _zeros(inputs))
+            baselines = _tensorize_baseline(inputs_tuple, _zeros(inputs_tuple))
 
         if type == "vanilla":
-            attributions, delta = ig.attribute(
-                inputs,
+            attributions, delta = ig.attribute(  # type: ignore[has-type]
+                inputs_tuple,
                 baselines,
                 additional_forward_args=additional_forward_args,
                 method=approximation_method,
@@ -416,8 +453,8 @@ class Test(BaseTest):
                 return_convergence_delta=True,
             )
             model.zero_grad()
-            attributions_without_delta, delta = ig.attribute(
-                inputs,
+            attributions_without_delta, delta = ig.attribute(  # type: ignore[has-type]
+                inputs_tuple,
                 baselines,
                 additional_forward_args=additional_forward_args,
                 method=approximation_method,
@@ -426,11 +463,11 @@ class Test(BaseTest):
                 return_convergence_delta=True,
             )
             model.zero_grad()
-            self.assertEqual([inputs[0].shape[0]], list(delta.shape))
+            self.assertEqual([inputs_tuple[0].shape[0]], list(delta.shape))
             delta_external = ig.compute_convergence_delta(
                 attributions,
                 baselines,
-                inputs,
+                inputs_tuple,
                 target=target,
                 additional_forward_args=additional_forward_args,
             )
@@ -439,7 +476,7 @@ class Test(BaseTest):
             nt = NoiseTunnel(ig)
             n_samples = 5
             attributions, delta = nt.attribute(
-                inputs,
+                inputs_tuple,
                 nt_type=type,
                 nt_samples=n_samples,
                 stdevs=0.00000002,
@@ -452,7 +489,7 @@ class Test(BaseTest):
                 nt_samples_batch_size=nt_samples_batch_size,
             )
             attributions_without_delta = nt.attribute(
-                inputs,
+                inputs_tuple,
                 nt_type=type,
                 nt_samples=n_samples,
                 stdevs=0.00000002,
@@ -464,9 +501,9 @@ class Test(BaseTest):
                 nt_samples_batch_size=3,
             )
             self.assertEqual(nt.multiplies_by_inputs, multiply_by_inputs)
-            self.assertEqual([inputs[0].shape[0] * n_samples], list(delta.shape))
+            self.assertEqual([inputs_tuple[0].shape[0] * n_samples], list(delta.shape))
 
-        for input, attribution in zip(inputs, attributions):
+        for input, attribution in zip(inputs_tuple, attributions):
             self.assertEqual(attribution.shape, input.shape)
         if multiply_by_inputs:
             assertTensorAlmostEqual(self, delta, torch.zeros(delta.shape), 0.07, "max")
@@ -488,24 +525,26 @@ class Test(BaseTest):
         model: Module,
         inputs: TensorOrTupleOfTensorsGeneric,
         baselines: Union[None, Tensor, Tuple[Tensor, ...]] = None,
-        target: Union[None, int] = None,
-        additional_forward_args: Any = None,
+        target: Optional[int] = None,
+        additional_forward_args: Optional[object] = None,
         approximation_method: str = "gausslegendre",
     ) -> None:
         ig = IntegratedGradients(model)
+        inputs_tuple: Tuple[Tensor, ...]
         if not isinstance(inputs, tuple):
-            inputs = (inputs,)  # type: ignore
-        inputs: Tuple[Tensor, ...]
+            inputs_tuple = (cast(Tensor, inputs),)
+        else:
+            inputs_tuple = inputs
 
         if baselines is not None and not isinstance(baselines, tuple):
             baselines = (baselines,)
 
         if baselines is None:
-            baselines = _tensorize_baseline(inputs, _zeros(inputs))
+            baselines = _tensorize_baseline(inputs_tuple, _zeros(inputs_tuple))
 
         for internal_batch_size in [None, 10, 20]:
-            attributions, delta = ig.attribute(
-                inputs,
+            attributions, delta = ig.attribute(  # type: ignore[has-type]
+                inputs_tuple,
                 baselines,
                 additional_forward_args=additional_forward_args,
                 method=approximation_method,
@@ -515,9 +554,9 @@ class Test(BaseTest):
                 return_convergence_delta=True,
             )
             total_delta = 0.0
-            for i in range(inputs[0].shape[0]):
-                attributions_indiv, delta_indiv = ig.attribute(
-                    tuple(input[i : i + 1] for input in inputs),
+            for i in range(inputs_tuple[0].shape[0]):
+                attrib_indiv, delta_indiv = ig.attribute(  # type: ignore[has-type]
+                    tuple(input[i : i + 1] for input in inputs_tuple),
                     tuple(baseline[i : i + 1] for baseline in baselines),
                     additional_forward_args=additional_forward_args,
                     method=approximation_method,
@@ -531,7 +570,7 @@ class Test(BaseTest):
                     assertTensorAlmostEqual(
                         self,
                         attributions[j][i : i + 1].squeeze(0),
-                        attributions_indiv[j].squeeze(0),
+                        attrib_indiv[j].squeeze(0),
                         delta=0.05,
                         mode="max",
                     )

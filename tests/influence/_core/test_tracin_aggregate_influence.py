@@ -1,19 +1,23 @@
-# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 
 import tempfile
 from typing import Callable
 
 import torch
-
 import torch.nn as nn
 from captum.influence._core.tracincp import TracInCP
-from parameterized import parameterized
-from tests.helpers.basic import assertTensorAlmostEqual, BaseTest
-from tests.helpers.influence.common import (
+from captum.testing.helpers.basic import assertTensorAlmostEqual, BaseTest
+from captum.testing.helpers.influence.common import (
     build_test_name_func,
     DataInfluenceConstructor,
     get_random_model_and_data,
 )
+from parameterized import parameterized
 from torch.utils.data import DataLoader
 
 
@@ -43,6 +47,7 @@ class TestTracInAggregateInfluence(BaseTest):
         summing
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,
@@ -103,6 +108,7 @@ class TestTracInAggregateInfluence(BaseTest):
         when the batches are collated into a single batch
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,
@@ -114,6 +120,7 @@ class TestTracInAggregateInfluence(BaseTest):
 
             # create a single batch representing the entire dataset
             single_batch = next(
+                # pyrefly: ignore [bad-argument-type]
                 iter(DataLoader(train_dataset, batch_size=len(train_dataset)))
             )
 

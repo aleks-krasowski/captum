@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import io
 import threading
 import time
 import unittest
 import unittest.mock
-from typing import Any, cast, List, Tuple, Union
+from typing import Any, Callable, cast, List, Tuple, Union
 
 import torch
+from captum._utils.common import _construct_future_forward
 from captum._utils.typing import BaselineType, TargetType, TensorOrTupleOfTensorsGeneric
-from captum.attr._core.feature_ablation import FeatureAblation
+from captum.attr._core.feature_ablation import (
+    _parse_forward_out,
+    _should_skip_inputs_and_warn,
+    check_output_shape_valid,
+    FeatureAblation,
+    format_result,
+)
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._utils.attribution import Attribution
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
     BasicModel,
     BasicModel_ConvNet_One_Conv,
     BasicModel_MultiLayer,
@@ -25,6 +39,7 @@ from tests.helpers.basic_models import (
 from torch import Tensor
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     r"""
     The following conversion tests are underlying assumptions
@@ -62,6 +77,40 @@ class Test(BaseTest):
             ablation_algo, inp, [[80.0, 200.0, 120.0]], perturbations_per_eval=(1, 2, 3)
         )
 
+    def test_forward_plan_matches_batched_sparse_mask_calls(self) -> None:
+        forward_calls = 0
+
+        def counted_forward(inputs: Tensor) -> Tensor:
+            nonlocal forward_calls
+            forward_calls += 1
+            return inputs.sum(dim=1)
+
+        algorithm = FeatureAblation(counted_forward)
+        inputs = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        feature_mask = torch.tensor([[0, 2, 5]])
+        planned = algorithm.expected_forward_count(
+            inputs,
+            feature_mask=feature_mask,
+            perturbations_per_eval=2,
+        )
+
+        algorithm.attribute(
+            inputs,
+            feature_mask=feature_mask,
+            perturbations_per_eval=2,
+        )
+
+        self.assertEqual(planned, 3)
+        self.assertEqual(planned, forward_calls)
+
+    def test_subclass_without_exact_planner_is_rejected(self) -> None:
+        class UnsupportedAblation(FeatureAblation):
+            pass
+
+        algorithm = UnsupportedAblation(lambda inputs: inputs.sum(dim=1))
+        with self.assertRaisesRegex(NotImplementedError, "exact forward plan"):
+            algorithm.expected_forward_count(torch.tensor([[1.0, 2.0]]))
+
     def test_simple_ablation_int_to_int(self) -> None:
         ablation_algo = FeatureAblation(BasicModel())
         inp = torch.tensor([[-3, 1, 2]])
@@ -81,9 +130,9 @@ class Test(BaseTest):
         )
 
     def test_simple_ablation_int_to_float(self) -> None:
-        net = BasicModel()
+        net: BasicModel = BasicModel()
 
-        def wrapper_func(inp):
+        def wrapper_func(inp: Tensor) -> Tensor:
             return net(inp).float()
 
         ablation_algo = FeatureAblation(wrapper_func)
@@ -161,14 +210,27 @@ class Test(BaseTest):
             perturbations_per_eval=(1, 2, 3),
         )
 
+    def test_multi_sample_ablation_with_mask_weighted(self) -> None:
+        ablation_algo = FeatureAblation(BasicModel_MultiLayer())
+        ablation_algo.use_weights = True
+        inp = torch.tensor([[2.0, 10.0, 3.0], [20.0, 50.0, 30.0]])
+        mask = torch.tensor([[0, 0, 1], [1, 1, 0]])
+        self._ablation_test_assert(
+            ablation_algo,
+            inp,
+            [[41.0, 41.0, 12.0], [280.0, 280.0, 120.0]],
+            feature_mask=mask,
+            perturbations_per_eval=(1, 2, 3),
+        )
+
     def test_multi_input_ablation_with_mask(self) -> None:
         ablation_algo = FeatureAblation(BasicModel_MultiLayer_MultiInput())
         inp1 = torch.tensor([[23.0, 100.0, 0.0], [20.0, 50.0, 30.0]])
         inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0], [2.0, 10.0, 3.0]])
         mask1 = torch.tensor([[1, 1, 1], [0, 1, 0]])
-        mask2 = torch.tensor([[0, 1, 2]])
-        mask3 = torch.tensor([[0, 1, 2], [0, 0, 0]])
+        mask2 = torch.tensor([[3, 4, 2]])
+        mask3 = torch.tensor([[5, 6, 7], [5, 5, 5]])
         expected = (
             [[492.0, 492.0, 492.0], [200.0, 200.0, 200.0]],
             [[80.0, 200.0, 120.0], [0.0, 400.0, 0.0]],
@@ -204,14 +266,129 @@ class Test(BaseTest):
             perturbations_per_eval=(1, 2, 3),
         )
 
-    def test_multi_input_ablation_with_mask_nt(self) -> None:
-        ablation_algo = NoiseTunnel(FeatureAblation(BasicModel_MultiLayer_MultiInput()))
+    def test_multi_input_ablation_with_int_input_tensor_and_float_baseline(
+        self,
+    ) -> None:
+        def sum_forward(*inps: torch.Tensor) -> torch.Tensor:
+            flattened = [torch.flatten(inp, start_dim=1) for inp in inps]
+            return torch.cat(flattened, dim=1).sum(1)
+
+        ablation_algo = FeatureAblation(sum_forward)
+        inp1 = torch.tensor([[0, 1], [3, 4]])
+        inp2 = torch.tensor(
+            [
+                [[0.1, 0.2], [0.3, 0.2]],
+                [[0.4, 0.5], [0.3, 0.2]],
+            ]
+        )
+        inp3 = torch.tensor([[0], [1]])
+
+        expected = (
+            torch.tensor([[-0.2, 0.8], [2.8, 3.8]]),
+            torch.tensor(
+                [
+                    [[-3.0, -2.9], [-2.8, -2.9]],
+                    [[-2.7, -2.6], [-2.8, -2.9]],
+                ]
+            ),
+            torch.tensor([[-0.4], [0.6]]),
+        )
+        self._ablation_test_assert(
+            ablation_algo,
+            (inp1, inp2, inp3),
+            expected,
+            target=None,
+            baselines=(0.2, 3.1, 0.4),
+        )
+
+    def test_multi_input_ablation_with_mask_weighted(self) -> None:
+        ablation_algo = FeatureAblation(BasicModel_MultiLayer_MultiInput())
+        ablation_algo.use_weights = True
+        inp1 = torch.tensor([[23.0, 100.0, 0.0], [20.0, 50.0, 30.0]])
+        inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
+        inp3 = torch.tensor([[0.0, 100.0, 10.0], [2.0, 10.0, 3.0]])
+        mask1 = torch.tensor([[1, 1, 1], [0, 1, 0]])
+        mask2 = torch.tensor([[3, 4, 2]])
+        mask3 = torch.tensor([[5, 6, 7], [5, 5, 5]])
+        expected = (
+            [[492.0, 492.0, 492.0], [200.0, 200.0, 200.0]],
+            [[80.0, 200.0, 120.0], [0.0, 400.0, 0.0]],
+            [[0.0, 400.0, 40.0], [60.0, 60.0, 60.0]],
+        )
+        self._ablation_test_assert(
+            ablation_algo,
+            (inp1, inp2, inp3),
+            expected,
+            additional_input=(1,),
+            feature_mask=(mask1, mask2, mask3),
+        )
+        self._ablation_test_assert(
+            ablation_algo,
+            (inp1, inp2),
+            expected[0:1],
+            additional_input=(inp3, 1),
+            feature_mask=(mask1, mask2),
+            perturbations_per_eval=(1, 2, 3),
+        )
+        expected_with_baseline = (
+            [[468.0, 468.0, 468.0], [184.0, 192.0, 184.0]],
+            [[68.0, 188.0, 108.0], [-12.0, 388.0, -12.0]],
+            [[-16.0, 384.0, 24.0], [12.0, 12.0, 12.0]],
+        )
+        self._ablation_test_assert(
+            ablation_algo,
+            (inp1, inp2, inp3),
+            expected_with_baseline,
+            additional_input=(1,),
+            feature_mask=(mask1, mask2, mask3),
+            baselines=(2, 3.0, 4),
+            perturbations_per_eval=(1, 2, 3),
+        )
+
+    def test_multi_input_ablation_with_mask_dupe_feature_idx(self) -> None:
+        ablation_algo = FeatureAblation(BasicModel_MultiLayer_MultiInput())
         inp1 = torch.tensor([[23.0, 100.0, 0.0], [20.0, 50.0, 30.0]])
         inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0], [2.0, 10.0, 3.0]])
         mask1 = torch.tensor([[1, 1, 1], [0, 1, 0]])
         mask2 = torch.tensor([[0, 1, 2]])
         mask3 = torch.tensor([[0, 1, 2], [0, 0, 0]])
+        expected_out = (
+            [[1092.0, 1092.0, 1092.0], [260.0, 600.0, 260.0]],
+            [[80.0, 1092.0, 160.0], [260.0, 600.0, 0.0]],
+            [[80.0, 1092.0, 160.0], [260.0, 260.0, 260.0]],
+        )
+        self._ablation_test_assert(
+            ablation_algo,
+            (inp1, inp2, inp3),
+            expected_out,
+            additional_input=(1,),
+            feature_mask=(mask1, mask2, mask3),
+        )
+
+        expected_cross_tensor_with_baseline = (
+            [[1040.0, 1040.0, 1040.0], [184.0, 580.0, 184.0]],
+            [[52.0, 1040.0, 132.0], [184.0, 580.0, -12.0]],
+            [[52.0, 1040.0, 132.0], [184.0, 184.0, 184.0]],
+        )
+        self._ablation_test_assert(
+            ablation_algo,
+            (inp1, inp2, inp3),
+            expected_cross_tensor_with_baseline,
+            additional_input=(1,),
+            feature_mask=(mask1, mask2, mask3),
+            baselines=(2, 3.0, 4),
+            perturbations_per_eval=(1, 2, 3),
+        )
+
+    def test_multi_input_ablation_with_mask_nt(self) -> None:
+        ablation_algo = NoiseTunnel(FeatureAblation(BasicModel_MultiLayer_MultiInput()))
+        inp1 = torch.tensor([[23.0, 100.0, 0.0], [20.0, 50.0, 30.0]])
+        inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
+        inp3 = torch.tensor([[0.0, 100.0, 10.0], [2.0, 10.0, 3.0]])
+        mask1 = torch.tensor([[1, 1, 1], [0, 1, 0]])
+        mask2 = torch.tensor([[3, 4, 2]])
+        mask3 = torch.tensor([[5, 6, 7], [5, 5, 5]])
         expected = (
             [[492.0, 492.0, 492.0], [200.0, 200.0, 200.0]],
             [[80.0, 200.0, 120.0], [0.0, 400.0, 0.0]],
@@ -335,11 +512,11 @@ class Test(BaseTest):
             _ = ablation.attribute(inp, perturbations_per_eval=2)
 
     def test_error_agg_mode_arbitrary_output(self) -> None:
-        net = BasicModel_MultiLayer()
+        net: BasicModel_MultiLayer = BasicModel_MultiLayer()
 
         # output 3 numbers for the entire batch
         # note that the batch size == 2
-        def forward_func(inp):
+        def forward_func(inp: Tensor) -> Tensor:
             pred = net(inp)
             return torch.stack([pred.sum(), pred.max(), pred.min()])
 
@@ -437,13 +614,11 @@ class Test(BaseTest):
         self._multi_input_batch_scalar_ablation_assert(ablation_algo, dtype=torch.int64)
 
     def test_future_output(self) -> None:
-        def forward_func(inp):
-            fut = torch.futures.Future()
-            fut.set_result(torch.ones(1, 5, 3, 2))
-            return fut
+        def forward_func(inp: Tensor) -> Tensor:
+            dummy_output = torch.ones(1, 5, 3, 2)
+            return dummy_output
 
-        abl = FeatureAblation(forward_func)
-        abl.use_futures = True
+        abl = FeatureAblation(_construct_future_forward(forward_func))
         inp = torch.randn(10, 5)
         mask = torch.arange(5).unsqueeze(0)
         self._ablation_test_assert(
@@ -454,36 +629,143 @@ class Test(BaseTest):
             feature_mask=mask,
             perturbations_per_eval=(1,),
             expected_ablation=torch.zeros((5 * 3 * 2,) + inp[0].shape),
+            test_future=True,
         )
 
     def test_future_output_2(self) -> None:
-        net = BasicModel_MultiLayer()
+        net: BasicModel_MultiLayer = BasicModel_MultiLayer()
 
-        def slow_set_future(fut, value):
+        def slow_set_future(fut: torch.futures.Future[Tensor], value: Tensor) -> None:
             time.sleep(10)
             out = net(value)
             fut.set_result(out)
 
-        def forward_func(inp):
-            fut = torch.futures.Future()
+        def forward_func(inp: Tensor) -> torch.futures.Future[Tensor]:
+            fut: torch.futures.Future[Tensor] = torch.futures.Future()
             t = threading.Thread(target=slow_set_future, args=(fut, inp))
             t.start()
             return fut
 
         abl = FeatureAblation(forward_func)
-        abl.use_futures = True
-        inp = torch.tensor([[20.0, 50.0, 30.0]], requires_grad=True)
+        inp = torch.tensor([[20.0, 50.0, 30.0], [10.0, 40.0, 20.0]], requires_grad=True)
         self._ablation_test_assert(
             ablation_algo=abl,
             test_input=inp,
             baselines=None,
             target=0,
             perturbations_per_eval=(1,),
-            expected_ablation=torch.tensor([[80.0, 200.0, 120.0]]),
+            expected_ablation=torch.tensor([[80.0, 200.0, 120.0], [40.0, 160.0, 80.0]]),
+            test_future=True,
         )
 
+    def test_future_wrong_usage(self) -> None:
+        def forward_func(inp: Tensor) -> Tensor:
+            dummy_output = torch.ones(1, 5, 3, 2)
+            return dummy_output
+
+        abl = FeatureAblation(_construct_future_forward(forward_func))
+        inp = torch.randn(10, 5)
+        mask = torch.arange(5).unsqueeze(0)
+        perturbations_per_eval = (1,)
+
+        with self.assertRaises(AssertionError):
+            for batch_size in perturbations_per_eval:
+                attributions = abl.attribute(  # noqa
+                    inp,
+                    target=None,
+                    feature_mask=mask,
+                    additional_forward_args=None,
+                    baselines=None,
+                    perturbations_per_eval=batch_size,
+                )
+
+    def test_future_wrong_usage_2(self) -> None:
+        def forward_func(inp: Tensor) -> Tensor:
+            dummy_output = torch.ones(1, 5, 3, 2)
+            return dummy_output
+
+        abl = FeatureAblation(forward_func)
+        inp = torch.randn(10, 5)
+        mask = torch.arange(5).unsqueeze(0)
+        perturbations_per_eval = (1,)
+
+        with self.assertRaises(AssertionError):
+            for batch_size in perturbations_per_eval:
+                attributions = abl.attribute_future(  # noqa
+                    inp,
+                    target=None,
+                    feature_mask=mask,
+                    additional_forward_args=None,
+                    baselines=None,
+                    perturbations_per_eval=batch_size,
+                )
+
+    def test_run_forward_on_skip_keeps_forward_count_in_lockstep(self) -> None:
+        # Regression test for the distributed NCCL-desync fix: when a per-rank
+        # batch is uneven, a rank-local skip drops a model forward, offsetting the
+        # shard PG's collective count. run_forward_on_skip=True must keep the
+        # forward count identical to the no-skip case so every rank stays in
+        # lockstep, while the skipped group's attribution stays zero.
+        def make_counting_forward() -> Tuple[Callable[..., Tensor], List[int]]:
+            calls: list[int] = [0]
+
+            def forward_func(x1: Tensor, x2: Tensor) -> Tensor:
+                calls[0] += 1
+                return x2.sum(dim=-1)
+
+            return forward_func, calls
+
+        # Feature group 0 lives only in x1; groups 1 and 2 live only in x2.
+        mask = (
+            torch.tensor([[0, 0]]),
+            torch.tensor([[1, 2]]),
+        )
+
+        def build_ablator(forward_func: Callable[..., Tensor]) -> FeatureAblation:
+            ablator = FeatureAblation(forward_func)
+            ablator._min_examples_per_batch_grouped = 2
+            return ablator
+
+        # Baseline: every tensor has batch size >= 2, so no group is skipped.
+        # 1 initial eval + 3 group forwards = 4 forwards.
+        no_skip_forward, no_skip_calls = make_counting_forward()
+        build_ablator(no_skip_forward).attribute(
+            (
+                torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+                torch.tensor([[5.0, 6.0], [7.0, 8.0]]),
+            ),
+            feature_mask=mask,
+        )
+        self.assertEqual(no_skip_calls[0], 4)
+
+        # x1 now has batch size 1, so group 0 fires the min-examples skip.
+        uneven_inp = (
+            torch.tensor([[1.0, 2.0]]),
+            torch.tensor([[5.0, 6.0], [7.0, 8.0]]),
+        )
+
+        # With run_forward_on_skip=True, the skipped group still issues a forward,
+        # matching the no-skip count exactly (lockstep).
+        skip_on_forward, skip_on_calls = make_counting_forward()
+        attribs = build_ablator(skip_on_forward).attribute(
+            uneven_inp,
+            feature_mask=mask,
+            run_forward_on_skip=True,
+        )
+        self.assertEqual(skip_on_calls[0], no_skip_calls[0])
+        # The skipped group (feature 0, in x1) keeps its zero-initialized attribution.
+        assertTensorAlmostEqual(
+            self, attribs[0], torch.zeros_like(attribs[0]), delta=0.0
+        )
+
+        # Default behavior (run_forward_on_skip=False) drops the skipped group's
+        # forward, which is exactly the desync this flag fixes.
+        skip_off_forward, skip_off_calls = make_counting_forward()
+        build_ablator(skip_off_forward).attribute(uneven_inp, feature_mask=mask)
+        self.assertEqual(skip_off_calls[0], no_skip_calls[0] - 1)
+
     def test_unassociated_output_3d_tensor(self) -> None:
-        def forward_func(inp):
+        def forward_func(inp: Tensor) -> Tensor:
             return torch.ones(1, 5, 3, 2)
 
         inp = torch.randn(10, 5)
@@ -499,7 +781,7 @@ class Test(BaseTest):
         )
 
     def test_single_inp_ablation_multi_output_aggr(self) -> None:
-        def forward_func(inp):
+        def forward_func(inp: Tensor) -> Tensor:
             return inp[0].unsqueeze(0)
 
         inp = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
@@ -516,7 +798,7 @@ class Test(BaseTest):
         )
 
     def test_single_inp_ablation_multi_output_aggr_mask_none(self) -> None:
-        def forward_func(inp):
+        def forward_func(inp: Tensor) -> Tensor:
             return inp[0].unsqueeze(0)
 
         inp = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
@@ -532,7 +814,7 @@ class Test(BaseTest):
         )
 
     def test_single_inp_ablation_multi_output_aggr_non_standard(self) -> None:
-        def forward_func(inp):
+        def forward_func(inp: Tensor) -> Tensor:
             return inp[0].unsqueeze(0)
 
         inp = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
@@ -548,7 +830,9 @@ class Test(BaseTest):
         )
 
     @unittest.mock.patch("sys.stderr", new_callable=io.StringIO)
-    def test_simple_ablation_with_show_progress(self, mock_stderr) -> None:
+    def test_simple_ablation_with_show_progress(
+        self, mock_stderr: unittest.mock.Mock
+    ) -> None:
         ablation_algo = FeatureAblation(BasicModel_MultiLayer())
         inp = torch.tensor([[20.0, 50.0, 30.0]], requires_grad=True)
 
@@ -574,7 +858,9 @@ class Test(BaseTest):
             mock_stderr.truncate(0)
 
     @unittest.mock.patch("sys.stderr", new_callable=io.StringIO)
-    def test_simple_ablation_with_mask_and_show_progress(self, mock_stderr) -> None:
+    def test_simple_ablation_with_mask_and_show_progress(
+        self, mock_stderr: unittest.mock.Mock
+    ) -> None:
         ablation_algo = FeatureAblation(BasicModel_MultiLayer())
         inp = torch.tensor([[20.0, 50.0, 30.0]], requires_grad=True)
 
@@ -641,8 +927,8 @@ class Test(BaseTest):
         inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0], [2.0, 10.0, 3.0]])
         mask1 = torch.tensor([[1, 1, 1]])
-        mask2 = torch.tensor([[0, 1, 2]])
-        mask3 = torch.tensor([[0, 1, 2]])
+        mask2 = torch.tensor([[0, 3, 2]])
+        mask3 = torch.tensor([[4, 5, 6]])
         expected = (
             torch.tensor([[1784, 1784, 1784]], dtype=dtype),
             torch.tensor([[160, 1200, 240]], dtype=dtype),
@@ -680,12 +966,13 @@ class Test(BaseTest):
         perturbations_per_eval: Tuple[int, ...] = (1,),
         baselines: BaselineType = None,
         target: TargetType = 0,
+        test_future: bool = False,
         **kwargs: Any,
     ) -> None:
         for batch_size in perturbations_per_eval:
             self.assertTrue(ablation_algo.multiplies_by_inputs)
-            if isinstance(ablation_algo, FeatureAblation) and ablation_algo.use_futures:
-                attributions = ablation_algo.attribute(
+            if isinstance(ablation_algo, FeatureAblation) and test_future:
+                attributions = ablation_algo.attribute_future(
                     test_input,
                     target=target,
                     feature_mask=feature_mask,
@@ -720,6 +1007,258 @@ class Test(BaseTest):
                 self.assertEqual(attributions.shape, expected_ablation.shape)
                 self.assertEqual(attributions.dtype, expected_ablation.dtype)
                 assertTensorAlmostEqual(self, attributions, expected_ablation)
+
+
+# pyrefly: ignore [invalid-inheritance]
+class TestParseForwardOutput(BaseTest):
+
+    def test_parse_forward_out_tensor_passthrough(self) -> None:
+        input_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        result = _parse_forward_out(input_tensor)
+
+        self.assertIs(result, input_tensor)
+        assertTensorAlmostEqual(self, result, input_tensor)
+
+    def test_parse_forward_out_python_int(self) -> None:
+        input_value = 42
+        result = _parse_forward_out(input_value)
+
+        self.assertIsInstance(result, Tensor)
+        self.assertEqual(result.dtype, torch.int64)
+        assertTensorAlmostEqual(self, result, torch.tensor(42))
+
+    def test_parse_forward_out_python_float(self) -> None:
+        input_value = 3.14
+        result = _parse_forward_out(input_value)
+
+        self.assertIsInstance(result, Tensor)
+        self.assertEqual(result.dtype, torch.float64)
+        assertTensorAlmostEqual(self, result, torch.tensor(3.14))
+
+    def test_parse_forward_out_invalid_none(self) -> None:
+        with self.assertRaises(AssertionError):
+            _parse_forward_out(None)
+
+
+# pyrefly: ignore [invalid-inheritance]
+class TestFormatResult(BaseTest):
+
+    def test_format_result_single_tensor_no_weights(self) -> None:
+        total_attrib: list[torch.Tensor] = [
+            torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        ]
+        weights: list[torch.Tensor] = []
+        is_inputs_tuple = False
+        use_weights = False
+
+        result = format_result(total_attrib, weights, is_inputs_tuple, use_weights)
+
+        self.assertIsInstance(result, Tensor)
+        assert isinstance(result, Tensor)  # Type narrowing for pyre
+        self.assertEqual(result.shape, (2, 3))
+        assertTensorAlmostEqual(
+            self, result, torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        )
+
+    def test_format_result_tuple_output_no_weights(self) -> None:
+        total_attrib: list[torch.Tensor] = [
+            torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+            torch.tensor([[5.0, 6.0], [7.0, 8.0]]),
+        ]
+        weights: list[torch.Tensor] = []
+        is_inputs_tuple = True
+        use_weights = False
+
+        result = format_result(total_attrib, weights, is_inputs_tuple, use_weights)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        assertTensorAlmostEqual(self, result[0], torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
+        assertTensorAlmostEqual(self, result[1], torch.tensor([[5.0, 6.0], [7.0, 8.0]]))
+
+    def test_format_result_single_tensor_with_weights(self) -> None:
+        total_attrib: list[torch.Tensor] = [
+            torch.tensor([[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])
+        ]
+        weights: list[torch.Tensor] = [
+            torch.tensor([[2.0, 4.0, 5.0], [8.0, 10.0, 12.0]])
+        ]
+        is_inputs_tuple = False
+        use_weights = True
+
+        result = format_result(total_attrib, weights, is_inputs_tuple, use_weights)
+
+        self.assertIsInstance(result, Tensor)
+        expected = torch.tensor([[5.0, 5.0, 6.0], [5.0, 5.0, 5.0]])
+        assertTensorAlmostEqual(self, result, expected)
+
+    def test_format_result_tuple_output_with_weights(self) -> None:
+        total_attrib: list[torch.Tensor] = [
+            torch.tensor([[10.0, 20.0], [30.0, 40.0]]),
+            torch.tensor([[50.0, 60.0], [70.0, 80.0]]),
+        ]
+        weights: list[torch.Tensor] = [
+            torch.tensor([[2.0, 4.0], [5.0, 8.0]]),
+            torch.tensor([[10.0, 12.0], [14.0, 16.0]]),
+        ]
+        is_inputs_tuple = True
+        use_weights = True
+
+        result = format_result(total_attrib, weights, is_inputs_tuple, use_weights)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        assertTensorAlmostEqual(self, result[0], torch.tensor([[5.0, 5.0], [6.0, 5.0]]))
+        assertTensorAlmostEqual(self, result[1], torch.tensor([[5.0, 5.0], [5.0, 5.0]]))
+
+    def test_format_result_integer_dtype_no_weights(self) -> None:
+        total_attrib: list[torch.Tensor] = [
+            torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.int32)
+        ]
+        weights: list[torch.Tensor] = []
+        is_inputs_tuple = False
+        use_weights = False
+
+        result = format_result(total_attrib, weights, is_inputs_tuple, use_weights)
+
+        self.assertIsInstance(result, Tensor)
+        assert isinstance(result, Tensor)  # Type narrowing for pyre
+        self.assertEqual(result.dtype, torch.int32)
+        assertTensorAlmostEqual(
+            self, result, torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.int32)
+        )
+
+
+# pyrefly: ignore [invalid-inheritance]
+class TestCheckOutputShapeValid(BaseTest):
+    def test_valid_output_shape_scaling(self) -> None:
+        inputs = (torch.randn(4, 3),)
+        num_examples = 2
+        initial_eval = torch.randn(2, 5)
+        modified_eval = torch.randn(4, 5)
+        perturbations_per_eval = 2
+
+        check_output_shape_valid(
+            inputs=inputs,
+            num_examples=num_examples,
+            initial_eval=initial_eval,
+            modified_eval=modified_eval,
+            perturbations_per_eval=perturbations_per_eval,
+        )
+
+    def test_invalid_output_shape_scaling(self) -> None:
+        inputs = (torch.randn(4, 3),)
+        num_examples = 2
+        initial_eval = torch.randn(2, 5)
+        modified_eval = torch.randn(6, 5)
+        perturbations_per_eval = 2
+
+        with self.assertRaises(AssertionError):
+            check_output_shape_valid(
+                inputs=inputs,
+                num_examples=num_examples,
+                initial_eval=initial_eval,
+                modified_eval=modified_eval,
+                perturbations_per_eval=perturbations_per_eval,
+            )
+
+    def test_skip_validation_when_perturbations_per_eval_is_one(self) -> None:
+        inputs = (torch.randn(4, 3),)
+        num_examples = 2
+        initial_eval = torch.randn(2, 5)
+        modified_eval = torch.randn(3, 5)
+        perturbations_per_eval = 1
+
+        check_output_shape_valid(
+            inputs=inputs,
+            num_examples=num_examples,
+            initial_eval=initial_eval,
+            modified_eval=modified_eval,
+            perturbations_per_eval=perturbations_per_eval,
+        )
+
+    def test_invalid_batch_size_not_divisible_by_num_examples(self) -> None:
+        inputs = (torch.randn(5, 3),)
+        num_examples = 2
+        initial_eval = torch.randn(2, 5)
+        modified_eval = torch.randn(5, 5)
+        perturbations_per_eval = 2
+
+        with self.assertRaises(AssertionError):
+            check_output_shape_valid(
+                inputs=inputs,
+                num_examples=num_examples,
+                initial_eval=initial_eval,
+                modified_eval=modified_eval,
+                perturbations_per_eval=perturbations_per_eval,
+            )
+
+
+# pyrefly: ignore [invalid-inheritance]
+class TestShouldSkipInputsAndWarn(BaseTest):
+    def test_skip_when_batch_size_less_than_min_examples(self) -> None:
+        current_feature_idxs = [0, 1]
+        feature_idx_to_tensor_idx = {0: [0], 1: [0]}
+        formatted_inputs = (torch.tensor([[1.0, 2.0], [3.0, 4.0]]),)
+        min_examples_per_batch_grouped = 3
+
+        with unittest.mock.patch(
+            "captum.attr._core.feature_ablation.logger"
+        ) as mock_logger:
+            result = _should_skip_inputs_and_warn(
+                current_feature_idxs,
+                feature_idx_to_tensor_idx,
+                formatted_inputs,
+                min_examples_per_batch_grouped,
+            )
+
+        self.assertTrue(result)
+        mock_logger.warning.assert_called_once()
+
+    def test_no_skip_when_batch_size_equal_to_min_examples(self) -> None:
+        current_feature_idxs = [0, 1]
+        feature_idx_to_tensor_idx = {0: [0], 1: [0]}
+        formatted_inputs = (torch.tensor([[1.0, 2.0], [3.0, 4.0]]),)
+        min_examples_per_batch_grouped = 2
+
+        result = _should_skip_inputs_and_warn(
+            current_feature_idxs,
+            feature_idx_to_tensor_idx,
+            formatted_inputs,
+            min_examples_per_batch_grouped,
+        )
+
+        self.assertFalse(result)
+
+    def test_skip_when_all_tensors_empty(self) -> None:
+        current_feature_idxs = [0]
+        feature_idx_to_tensor_idx = {0: [0]}
+        formatted_inputs = (torch.tensor([]),)
+
+        with unittest.mock.patch(
+            "captum.attr._core.feature_ablation.logger"
+        ) as mock_logger:
+            result = _should_skip_inputs_and_warn(
+                current_feature_idxs,
+                feature_idx_to_tensor_idx,
+                formatted_inputs,
+            )
+
+        self.assertTrue(result)
+        mock_logger.info.assert_called_once()
+
+    def test_no_skip_when_tensors_not_empty(self) -> None:
+        current_feature_idxs = [0, 1]
+        feature_idx_to_tensor_idx = {0: [0], 1: [0]}
+        formatted_inputs = (torch.tensor([[1.0, 2.0], [3.0, 4.0]]),)
+
+        result = _should_skip_inputs_and_warn(
+            current_feature_idxs,
+            feature_idx_to_tensor_idx,
+            formatted_inputs,
+        )
+
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":

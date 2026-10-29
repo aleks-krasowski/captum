@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 
-from typing import Any, Callable, cast, Dict, Optional, Tuple, Type
+# pyre-strict
+
+
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 from captum._utils.common import _format_additional_forward_args
@@ -10,15 +17,19 @@ from captum.attr._core.integrated_gradients import IntegratedGradients
 from captum.attr._core.lime import Lime
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._utils.attribution import Attribution, InternalAttribution
-from tests.attr.helpers.gen_test_utils import (
+from captum.testing.attr.helpers.gen_test_utils import (
     gen_test_name,
     get_target_layer,
     parse_test_config,
     should_create_generated_test,
 )
-from tests.attr.helpers.test_config import config
-from tests.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest, deep_copy_args
-from tests.helpers.basic_models import BasicModel_MultiLayer
+from captum.testing.attr.helpers.test_config import config
+from captum.testing.helpers.basic import (
+    assertTensorTuplesAlmostEqual,
+    BaseTest,
+    deep_copy_args,
+)
+from captum.testing.helpers.basic_models import BasicModel_MultiLayer
 from torch import Tensor
 from torch.nn import Module
 
@@ -39,7 +50,9 @@ class TargetsMeta(type):
     / list of targets.
     """
 
-    def __new__(cls, name: str, bases: Tuple, attrs: Dict):
+    def __new__(
+        metacls, name: str, bases: Tuple[Type[Any], ...], attrs: Dict[str, Any]
+    ) -> "TargetsMeta":
         for test_config in config:
             (
                 algorithms,
@@ -63,7 +76,7 @@ class TargetsMeta(type):
                     algorithm, FeaturePermutation
                 ) or not should_create_generated_test(algorithm):
                     continue
-                test_method = cls.make_single_target_test(
+                test_method = metacls.make_single_target_test(
                     algorithm,
                     model,
                     layer,
@@ -84,14 +97,14 @@ class TargetsMeta(type):
                         "Trying to overwrite existing test with name: %r" % test_name
                     )
                 attrs[test_name] = test_method
-        return super(TargetsMeta, cls).__new__(cls, name, bases, attrs)
+        return super(TargetsMeta, metacls).__new__(metacls, name, bases, attrs)
 
     # Arguments are deep copied to ensure tests are independent and are not affected
     # by any modifications within a previous test.
     @classmethod
     @deep_copy_args
     def make_single_target_test(
-        cls,
+        metacls,
         algorithm: Type[Attribution],
         model: Module,
         layer: Optional[str],
@@ -99,34 +112,37 @@ class TargetsMeta(type):
         target_delta: float,
         noise_tunnel: bool,
         baseline_distr: bool,
-    ) -> Callable:
+    ) -> Callable[..., None]:
         """
         This method creates a single target test for the given algorithm and parameters.
         """
 
-        target_layer = get_target_layer(model, layer) if layer is not None else None
+        target_layer: Optional[Module] = (
+            get_target_layer(model, layer) if layer is not None else None
+        )
         # Obtains initial arguments to replace with each example
         # individually.
-        original_inputs = args["inputs"]
-        original_targets = args["target"]
-        original_additional_forward_args = (
+        original_inputs: Union[Tensor, Tuple[Tensor, ...]] = args["inputs"]
+        original_targets: Union[List[Any], Tensor] = args["target"]
+        original_additional_forward_args: Optional[Tuple[Any, ...]] = (
             _format_additional_forward_args(args["additional_forward_args"])
             if "additional_forward_args" in args
             else None
         )
-        num_examples = (
+        num_examples: int = (
             len(original_inputs)
             if isinstance(original_inputs, Tensor)
             else len(original_inputs[0])
         )
-        replace_baselines = "baselines" in args and not baseline_distr
+        replace_baselines: bool = "baselines" in args and not baseline_distr
+        original_baselines: Any = None
         if replace_baselines:
             original_baselines = args["baselines"]
 
-        def target_test_assert(self) -> None:
+        def target_test_assert(self: "TestTargets") -> None:
             attr_method: Attribution
             if target_layer:
-                internal_algorithm = cast(Type[InternalAttribution], algorithm)
+                internal_algorithm = cast(Type[InternalAttribution[Module]], algorithm)
                 attr_method = internal_algorithm(model, target_layer)
             else:
                 attr_method = algorithm(model)
@@ -214,13 +230,15 @@ class TestTargets(BaseTest, metaclass=TargetsMeta):
     def test_simple_target_missing_error(self) -> None:
         net = BasicModel_MultiLayer()
         inp = torch.zeros((1, 3))
+        attr = IntegratedGradients(net)
         with self.assertRaises(AssertionError):
-            attr = IntegratedGradients(net)
-            attr.attribute(inp)
+            attr.attribute(inp)  # type: ignore[has-type]
 
     def test_multi_target_error(self) -> None:
         net = BasicModel_MultiLayer()
         inp = torch.zeros((1, 3))
+        attr = IntegratedGradients(net)
         with self.assertRaises(AssertionError):
-            attr = IntegratedGradients(net)
-            attr.attribute(inp, additional_forward_args=(None, True), target=(1, 0))
+            attr.attribute(  # type: ignore[has-type]
+                inp, additional_forward_args=(None, True), target=(1, 0)
+            )

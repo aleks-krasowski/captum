@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 from captum._utils.typing import TensorOrTupleOfTensorsGeneric
 from captum.robust import FGSM
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel, BasicModel2, BasicModel_MultiLayer
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
+    BasicModel,
+    BasicModel2,
+    BasicModel_MultiLayer,
+)
 from torch import Tensor
 from torch.nn import CrossEntropyLoss
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_attack_nontargeted(self) -> None:
         model = BasicModel()

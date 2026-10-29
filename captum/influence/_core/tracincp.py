@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import glob
 import warnings
 from abc import abstractmethod
@@ -7,9 +14,10 @@ from os.path import join
 from typing import (
     Any,
     Callable,
+    cast,
+    Iterable,
     Iterator,
     List,
-    Literal,
     Optional,
     Tuple,
     Type,
@@ -36,7 +44,6 @@ from captum.log import log_usage
 from torch import Tensor
 from torch.nn import Module
 from torch.utils.data import DataLoader, Dataset
-
 
 r"""
 
@@ -80,10 +87,14 @@ class TracInCPBase(DataInfluence):
         self,
         model: Module,
         train_dataset: Union[Dataset, DataLoader],
-        checkpoints: Union[str, List[str], Iterator],
-        checkpoints_load_func: Callable = _load_flexible_state_dict,
+        checkpoints: Union[str, List[str], Iterator[str]],
+        checkpoints_load_func: Callable[
+            [Module, str], float
+        ] = _load_flexible_state_dict,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         batch_size: Union[int, None] = 1,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         test_loss_fn: Optional[Union[Module, Callable]] = None,
     ) -> None:
         r"""
@@ -150,12 +161,12 @@ class TracInCPBase(DataInfluence):
         """
 
         self.model: Module = model
-
         self.checkpoints = checkpoints  # type: ignore
-
+        self._checkpoints: List[str] = self.checkpoints
         self.checkpoints_load_func = checkpoints_load_func
         self.loss_fn = loss_fn
         # If test_loss_fn not provided, it's assumed to be same as loss_fn
+        # pyre-fixme[4]: Attribute must be annotated.
         self.test_loss_fn = loss_fn if test_loss_fn is None else test_loss_fn
         self.batch_size = batch_size
 
@@ -164,6 +175,7 @@ class TracInCPBase(DataInfluence):
                 "since the `train_dataset` argument was a `Dataset`, "
                 "`batch_size` must be an int."
             )
+            # pyre-fixme[4]: Attribute must be annotated.
             self.train_dataloader = DataLoader(train_dataset, batch_size, shuffle=False)
         else:
             self.train_dataloader = train_dataset
@@ -180,7 +192,8 @@ class TracInCPBase(DataInfluence):
                 "Unable to determine the number of batches in training dataset "
                 "`train_dataset`. Therefore, if showing the progress of computations, "
                 "only the number of batches processed can be displayed, and not the "
-                "percentage completion of the computation, nor any time estimates."
+                "percentage completion of the computation, nor any time estimates.",
+                stacklevel=1,
             )
 
     @property
@@ -188,7 +201,7 @@ class TracInCPBase(DataInfluence):
         return self._checkpoints
 
     @checkpoints.setter
-    def checkpoints(self, checkpoints: Union[str, List[str], Iterator]) -> None:
+    def checkpoints(self, checkpoints: Union[str, List[str], Iterator[str]]) -> None:
         if isinstance(checkpoints, str):
             self._checkpoints = AV.sort_files(glob.glob(join(checkpoints, "*")))
         elif isinstance(checkpoints, List) and isinstance(checkpoints[0], str):
@@ -392,6 +405,11 @@ class TracInCPBase(DataInfluence):
                     or opponents (`proponents=False`), if running in k-most influential
                     mode.
                     Default: True
+            unpack_inputs (bool, optional): If True and `inputs` is a tuple or list,
+                    the elements are unpacked as separate positional arguments to the
+                    model. If False, `inputs` is wrapped in a tuple and passed as a
+                    single argument.
+                    Default: True
             show_progress (bool, optional): For all modes, computation of results
                     requires "training dataset computations": computations for each
                     batch in the training dataset `train_dataset`, which may
@@ -445,11 +463,15 @@ class TracInCP(TracInCPBase):
         self,
         model: Module,
         train_dataset: Union[Dataset, DataLoader],
-        checkpoints: Union[str, List[str], Iterator],
-        checkpoints_load_func: Callable = _load_flexible_state_dict,
+        checkpoints: Union[str, List[str], Iterator[str]],
+        checkpoints_load_func: Callable[
+            [Module, str], float
+        ] = _load_flexible_state_dict,
         layers: Optional[List[str]] = None,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         batch_size: Union[int, None] = 1,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         test_loss_fn: Optional[Union[Module, Callable]] = None,
         sample_wise_grads_per_batch: bool = False,
         vectorize: Optional[Literal["vmap", "batched_grad"]] = None,
@@ -550,7 +572,7 @@ class TracInCP(TracInCPBase):
                     inefficient. We offer an implementation of batch-wise gradient
                     computations w.r.t. to model parameters which is computationally
                     more efficient. This implementation can be enabled by setting the
-                    `sample_wise_grad_per_batch` argument to `True`, and should be
+                    `sample_wise_grads_per_batch` argument to `True`, and should be
                     enabled if and only if the `loss_fn` argument is a "reduction" loss
                     function. For example, `nn.BCELoss(reduction="sum")` would be a
                     valid `loss_fn` if this implementation is enabled (see
@@ -591,11 +613,11 @@ class TracInCP(TracInCPBase):
         self.vectorize_chunk_size = vectorize_chunk_size
 
         # check `loss_fn`
-        self.reduction_type = _check_loss_fn(
+        self.reduction_type: str = _check_loss_fn(
             self, loss_fn, "loss_fn", sample_wise_grads_per_batch
         )
         # check `test_loss_fn` if it was provided
-        self.test_reduction_type = (
+        self.test_reduction_type: str = (
             self.reduction_type
             if test_loss_fn is None
             else _check_loss_fn(
@@ -608,11 +630,11 @@ class TracInCP(TracInCPBase):
         within influence to restore after every influence call)? or make a copy so that
         changes to grad_requires aren't persistent after using TracIn.
         """
-        self.layer_modules = None
+        self.layer_modules: Optional[List[Module]] = None
         if layers is not None:
             self.layer_modules = _set_active_parameters(model, layers)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def influence(  # type: ignore[override]
         self,
         inputs: Union[Tuple[Any, ...], DataLoader],
@@ -751,6 +773,7 @@ class TracInCP(TracInCPBase):
     def _sum_jacobians(
         self,
         inputs: DataLoader,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         reduction_type: Optional[str] = None,
         test: bool = False,
@@ -763,7 +786,7 @@ class TracInCP(TracInCPBase):
 
         inputs_batch = next(inputs_iter)
 
-        def get_batch_contribution(inputs_batch):
+        def get_batch_contribution(inputs_batch: Tuple[Any, ...]) -> Tuple[Tensor, ...]:
             _input_jacobians = self._basic_computation_tracincp(
                 inputs_batch[0:-1],
                 inputs_batch[-1],
@@ -794,6 +817,7 @@ class TracInCP(TracInCPBase):
     def _concat_jacobians(
         self,
         inputs: DataLoader,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         reduction_type: Optional[str] = None,
         test: bool = False,
@@ -814,7 +838,7 @@ class TracInCP(TracInCPBase):
             for all_inputs_batch_jacobian in zip(*all_inputs_batch_jacobians)
         )
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def compute_intermediate_quantities(
         self,
         inputs: Union[Tuple[Any, ...], DataLoader],
@@ -873,10 +897,9 @@ class TracInCP(TracInCPBase):
                     the variable d in the top of page 15 of the TracIn paper:
                     https://arxiv.org/pdf/2002.08484.pdf.
         """
-        # If `inputs` is not a `DataLoader`, turn it into one.
-        inputs = _format_inputs_dataset(inputs)
+        f_inputs: DataLoader = _format_inputs_dataset(inputs)
 
-        def get_checkpoint_contribution(checkpoint):
+        def get_checkpoint_contribution(checkpoint: str) -> Tensor:
             assert (
                 checkpoint is not None
             ), "None returned from `checkpoints`, cannot load."
@@ -885,11 +908,15 @@ class TracInCP(TracInCPBase):
             # get jacobians as tuple of tensors
             if aggregate:
                 inputs_jacobians = self._sum_jacobians(
-                    inputs, self.loss_fn, self.reduction_type
+                    f_inputs,
+                    self.loss_fn,
+                    self.reduction_type,
                 )
             else:
                 inputs_jacobians = self._concat_jacobians(
-                    inputs, self.loss_fn, self.reduction_type
+                    f_inputs,
+                    self.loss_fn,
+                    self.reduction_type,
                 )
             # flatten into single tensor
             return learning_rate * torch.cat(
@@ -920,7 +947,9 @@ class TracInCP(TracInCPBase):
         computed by `_get_checkpoint_jacobians`.
         """
 
-        def get_checkpoint_contribution(input_jacobians, checkpoint):
+        def get_checkpoint_contribution(
+            input_jacobians: Tuple[Tensor, ...], checkpoint: str
+        ) -> Tensor:
 
             assert (
                 checkpoint is not None
@@ -958,6 +987,7 @@ class TracInCP(TracInCPBase):
         self,
         inputs_dataset: DataLoader,
         aggregate: bool,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
     ) -> List[Tuple[Tensor, ...]]:
         """
@@ -1036,10 +1066,12 @@ class TracInCP(TracInCPBase):
         inputs = _format_inputs_dataset(inputs)
 
         train_dataloader = self.train_dataloader
-
+        data_iterable: Union[Iterable[Tuple[object, ...]], DataLoader] = (
+            train_dataloader
+        )
         if show_progress:
-            train_dataloader = progress(
-                train_dataloader,
+            data_iterable = progress(
+                cast(Iterable[Tuple[object, ...]], train_dataloader),
                 desc=(
                     f"Using {self.get_name()} to compute "
                     "influence for training batches"
@@ -1056,7 +1088,7 @@ class TracInCP(TracInCPBase):
         return torch.cat(
             [
                 self._influence_batch_tracincp(inputs_checkpoint_jacobians, batch)
-                for batch in train_dataloader
+                for batch in data_iterable
             ],
             dim=1,
         )
@@ -1210,7 +1242,7 @@ class TracInCP(TracInCPBase):
         if show_progress:
             # Try to determine length of inner progress bar if possible, with a default
             # of `None`.
-            inputs_len = None
+            inputs_len: Optional[int] = None
             try:
                 inputs_len = len(inputs)
             except TypeError:
@@ -1219,10 +1251,11 @@ class TracInCP(TracInCPBase):
                     "Therefore, if showing the progress of the computation of self "
                     "influence scores, only the number of batches processed can be "
                     "displayed, and not the percentage completion of the computation, "
-                    "nor any time estimates."
+                    "nor any time estimates.",
+                    stacklevel=1,
                 )
 
-        def calculate_via_vector_norm(layer_jacobian):
+        def calculate_via_vector_norm(layer_jacobian: Tensor) -> Tensor:
             # Helper to efficiently calculate vector norm if pytorch version permits.
             return (
                 torch.linalg.vector_norm(
@@ -1232,7 +1265,7 @@ class TracInCP(TracInCPBase):
                 ** 2
             )
 
-        def get_checkpoint_contribution(checkpoint):
+        def get_checkpoint_contribution(checkpoint: str) -> Tensor:
             # This function returns a 1D tensor representing the contribution to the
             # self influence score for the given checkpoint, for all batches in
             # `inputs`. The length of the 1D tensor is the total number of
@@ -1249,7 +1282,7 @@ class TracInCP(TracInCPBase):
             # the same)
             checkpoint_contribution = []
 
-            _inputs = inputs
+            _inputs: Union[DataLoader, Iterable[Tuple[Tensor, ...]]] = inputs
             # If `show_progress` is true, create an inner progress bar that keeps track
             # of how many batches have been processed for the current checkpoint
             if show_progress:
@@ -1265,8 +1298,8 @@ class TracInCP(TracInCPBase):
             for batch in _inputs:
 
                 layer_jacobians = self._basic_computation_tracincp(
-                    batch[0:-1],
-                    batch[-1],
+                    cast(Tuple[Tensor, ...], batch)[0:-1],
+                    cast(Tuple[Tensor, ...], batch)[-1],
                     self.loss_fn,
                     self.reduction_type,
                 )
@@ -1324,7 +1357,7 @@ class TracInCP(TracInCPBase):
 
         return batches_self_tracin_scores
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def self_influence(
         self,
         inputs: Optional[Union[Tuple[Any, ...], DataLoader]] = None,
@@ -1404,6 +1437,7 @@ class TracInCP(TracInCPBase):
         self,
         inputs: Tuple[Any, ...],
         targets: Optional[Tensor] = None,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         reduction_type: Optional[str] = None,
         test: bool = False,

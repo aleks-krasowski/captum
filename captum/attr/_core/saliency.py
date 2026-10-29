@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 
-from typing import Any, Callable
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
+from typing import Callable, cast, Optional
 
 import torch
 from captum._utils.common import _format_output, _format_tensor_into_tuples, _is_tuple
@@ -11,6 +18,7 @@ from captum._utils.gradient import (
 from captum._utils.typing import TargetType, TensorOrTupleOfTensorsGeneric
 from captum.attr._utils.attribution import GradientAttribution
 from captum.log import log_usage
+from torch import Tensor
 
 
 class Saliency(GradientAttribution):
@@ -23,7 +31,7 @@ class Saliency(GradientAttribution):
         https://arxiv.org/abs/1312.6034
     """
 
-    def __init__(self, forward_func: Callable) -> None:
+    def __init__(self, forward_func: Callable[..., Tensor]) -> None:
         r"""
         Args:
 
@@ -32,13 +40,13 @@ class Saliency(GradientAttribution):
         """
         GradientAttribution.__init__(self, forward_func)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
         abs: bool = True,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
     ) -> TensorOrTupleOfTensorsGeneric:
         r"""
         Args:
@@ -122,17 +130,26 @@ class Saliency(GradientAttribution):
         # converting it into a tuple.
         is_inputs_tuple = _is_tuple(inputs)
 
-        inputs = _format_tensor_into_tuples(inputs)
-        gradient_mask = apply_gradient_requirements(inputs)
+        inputs_tuple = _format_tensor_into_tuples(inputs)
+        gradient_mask = apply_gradient_requirements(inputs_tuple)
 
         # No need to format additional_forward_args here.
         # They are being formated in the `_run_forward` function in `common.py`
         gradients = self.gradient_func(
-            self.forward_func, inputs, target, additional_forward_args
+            self.forward_func, inputs_tuple, target, additional_forward_args
         )
         if abs:
             attributions = tuple(torch.abs(gradient) for gradient in gradients)
         else:
             attributions = gradients
-        undo_gradient_requirements(inputs, gradient_mask)
-        return _format_output(is_inputs_tuple, attributions)
+        undo_gradient_requirements(inputs_tuple, gradient_mask)
+
+        return cast(
+            TensorOrTupleOfTensorsGeneric, _format_output(is_inputs_tuple, attributions)
+        )
+
+    def attribute_future(self) -> None:
+        r"""
+        This method is not implemented for Saliency.
+        """
+        raise NotImplementedError("attribute_future is not implemented for Saliency")

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from abc import ABC, abstractmethod
 from typing import Any, Type
 
@@ -23,7 +30,9 @@ class DataInfluence(ABC):
             **kwargs: Additional key-value arguments that are necessary for specific
                     implementation of `DataInfluence` abstract class.
         """
+        # pyre-fixme[16]: `DataInfluence` has no attribute `model`.
         self.model = model
+        # pyre-fixme[16]: `DataInfluence` has no attribute `train_dataset`.
         self.train_dataset = train_dataset
 
     @abstractmethod

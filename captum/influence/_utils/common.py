@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import warnings
 from functools import reduce
 from typing import (
     Any,
     Callable,
+    cast,
     Dict,
     Iterable,
     List,
@@ -23,7 +31,6 @@ from captum._utils.gradient import (
     _extract_parameters_from_layers,
 )
 from captum._utils.progress import progress
-
 from torch import Tensor
 from torch.nn import Module
 from torch.utils.data import DataLoader, Dataset
@@ -64,7 +71,7 @@ def _tensor_batch_dot(t1: Tensor, t2: Tensor) -> Tensor:
 
 
 def _gradient_dot_product(
-    input_grads: Tuple[Tensor], src_grads: Tuple[Tensor]
+    input_grads: Tuple[Tensor, ...], src_grads: Tuple[Tensor, ...]
 ) -> Tensor:
     r"""
     Computes the dot product between the gradient vector for a model on an input batch
@@ -85,6 +92,7 @@ def _gradient_dot_product(
 
 
 def _jacobian_loss_wrt_inputs(
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Union[Module, Callable],
     out: Tensor,
     targets: Tensor,
@@ -175,7 +183,7 @@ def _load_flexible_state_dict(model: Module, path: str) -> float:
     The module state_dict is modified in-place, and the learning rate is returned.
     """
 
-    checkpoint = torch.load(path)
+    checkpoint = torch.load(path, weights_only=True)
 
     learning_rate = checkpoint.get("learning_rate", 1.0)
     # can get learning rate from optimizer state_dict?
@@ -200,6 +208,7 @@ def _load_flexible_state_dict(model: Module, path: str) -> float:
 
 def _get_k_most_influential_helper(
     influence_src_dataloader: DataLoader,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     influence_batch_fn: Callable,
     inputs: Any,
     k: int = 5,
@@ -269,13 +278,14 @@ def _get_k_most_influential_helper(
 
     # if show_progress, create progress bar
     total: Optional[int] = None
+    data_iterator: Union[Iterable[object], DataLoader] = influence_src_dataloader
     if show_progress:
         try:
             total = len(influence_src_dataloader)
         except AttributeError:
             pass
-        influence_src_dataloader = progress(
-            influence_src_dataloader,
+        data_iterator = progress(
+            cast(Iterable[object], influence_src_dataloader),
             desc=desc,
             total=total,
         )
@@ -321,6 +331,7 @@ class _DatasetFromList(Dataset):
     def __init__(self, _l: List[Any]) -> None:
         self._l = _l
 
+    # pyrefly: ignore [bad-override-param-name]
     def __getitem__(self, i: int) -> Any:
         return self._l[i]
 
@@ -328,7 +339,9 @@ class _DatasetFromList(Dataset):
         return len(self._l)
 
 
-def _format_inputs_dataset(inputs_dataset: Union[Tuple[Any, ...], DataLoader]):
+def _format_inputs_dataset(
+    inputs_dataset: Union[Tuple[Any, ...], DataLoader],
+) -> DataLoader:
     # if `inputs_dataset` is not a `DataLoader`, turn it into one.
     # `_DatasetFromList` turns a list into a `Dataset` where `__getitem__`
     # returns an element in the list, and using it to construct a `DataLoader`
@@ -341,6 +354,7 @@ def _format_inputs_dataset(inputs_dataset: Union[Tuple[Any, ...], DataLoader]):
 
 
 def _self_influence_by_batches_helper(
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     self_influence_batch_fn: Callable,
     instance_name: str,
     inputs_dataset: Union[Tuple[Any, ...], DataLoader],
@@ -395,6 +409,7 @@ def _self_influence_by_batches_helper(
     """
     # If `inputs_dataset` is not a `DataLoader`, turn it into one.
     inputs_dataset = _format_inputs_dataset(inputs_dataset)
+    inputs_dataset_iterator: Union[Iterable[object], DataLoader] = inputs_dataset
 
     # If `show_progress` is true, create a progress bar that keeps track of how
     # many batches have been processed
@@ -410,10 +425,11 @@ def _self_influence_by_batches_helper(
                 "Therefore, if showing the progress of the computation of self "
                 "influence scores, only the number of batches processed can be "
                 "displayed, and not the percentage completion of the computation, "
-                "nor any time estimates."
+                "nor any time estimates.",
+                stacklevel=1,
             )
         # then create the progress bar
-        inputs_dataset = progress(
+        inputs_dataset_iterator = progress(
             inputs_dataset,
             desc=f"Using {instance_name} to compute self influence. Processing batch",
             total=inputs_dataset_len,
@@ -428,13 +444,14 @@ def _self_influence_by_batches_helper(
     return torch.cat(
         [
             self_influence_batch_fn(batch, show_progress=False)
-            for batch in inputs_dataset
+            for batch in inputs_dataset_iterator
         ]
     )
 
 
 def _check_loss_fn(
     influence_instance: Union["TracInCPBase", "InfluenceFunctionBase"],
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]],
     loss_fn_name: str,
     sample_wise_grads_per_batch: bool = True,
@@ -490,7 +507,8 @@ def _check_loss_fn(
                 f'please set the reduction attribute of `{loss_fn_name}` to "mean", '
                 f'i.e. `{loss_fn_name}.reduction = "mean"`. Note that if '
                 "`sample_wise_grads_per_batch` is True, the implementation "
-                "assumes the reduction is either a sum or mean reduction."
+                "assumes the reduction is either a sum or mean reduction.",
+                stacklevel=1,
             )
             reduction_type = "sum"
         else:
@@ -499,7 +517,8 @@ def _check_loss_fn(
                 "`sample_wise_grads_per_batch` is False, the implementation "
                 f'assumes that `{loss_fn_name}` is a "per-example" loss function (see '
                 f"documentation for `{loss_fn_name}` for details).  Please ensure "
-                "that this is the case."
+                "that this is the case.",
+                stacklevel=1,
             )
 
     return reduction_type
@@ -520,12 +539,14 @@ def _set_active_parameters(model: Module, layers: List[str]) -> List[Module]:
                 warnings.warn(
                     "Setting required grads for layer: {}, name: {}".format(
                         ".".join(layer), name
-                    )
+                    ),
+                    stacklevel=1,
                 )
                 param.requires_grad = True
     return layer_modules
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def _progress_bar_constructor(
     influence_inst: "InfluenceFunctionBase",
     inputs_dataset: DataLoader,
@@ -544,7 +565,8 @@ def _progress_bar_constructor(
             f"of the computation of {quantities_name}, "
             "only the number of batches processed can be "
             "displayed, and not the percentage completion of the computation, "
-            "nor any time estimates."
+            "nor any time estimates.",
+            stacklevel=1,
         )
 
     return progress(
@@ -581,6 +603,7 @@ def _flatten_params(_params: Tuple[Tensor, ...]) -> Tensor:
     return torch.cat([_param.view(-1) for _param in _params])
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def _unflatten_params_factory(
     param_shapes: Union[List[Tuple[int, ...]], Tuple[Tensor, ...]],
 ):
@@ -588,6 +611,8 @@ def _unflatten_params_factory(
     returns a function which is the inverse of `_flatten_params`
     """
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def _unflatten_params(flattened_params):
         params = []
         offset = 0
@@ -612,7 +637,9 @@ def _influence_batch_intermediate_quantities_influence_function(
     `IntermediateQuantitiesInfluenceFunction`
     """
     return torch.matmul(
+        # pyrefly: ignore [bad-argument-type]
         influence_inst.compute_intermediate_quantities(test_batch),
+        # pyrefly: ignore [missing-attribute]
         influence_inst.compute_intermediate_quantities(train_batch).T,
     )
 
@@ -646,7 +673,9 @@ def _influence_helper_intermediate_quantities_influence_function(
     return torch.cat(
         [
             torch.matmul(
+                # pyrefly: ignore [bad-argument-type]
                 inputs_intermediate_quantities,
+                # pyrefly: ignore [missing-attribute]
                 influence_inst.compute_intermediate_quantities(batch).T,
             )
             for batch in train_dataloader
@@ -677,6 +706,7 @@ def _self_influence_helper_intermediate_quantities_influence_function(
     inputs_dataset = _format_inputs_dataset(inputs_dataset)
 
     if show_progress:
+        # pyrefly: ignore [bad-assignment]
         inputs_dataset = _progress_bar_constructor(
             influence_inst, inputs_dataset, "inputs_dataset", "self influence scores"
         )
@@ -684,6 +714,7 @@ def _self_influence_helper_intermediate_quantities_influence_function(
     return torch.cat(
         [
             torch.sum(
+                # pyrefly: ignore [unsupported-operation]
                 influence_inst.compute_intermediate_quantities(
                     batch,
                     show_progress=False,
@@ -691,11 +722,13 @@ def _self_influence_helper_intermediate_quantities_influence_function(
                 ** 2,
                 dim=1,
             )
+            # pyrefly: ignore [not-iterable]
             for batch in inputs_dataset
         ]
     )
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def _eig_helper(H: Tensor):
     """
     wrapper around `torch.linalg.eig` that sorts eigenvalues / eigenvectors by
@@ -810,6 +843,7 @@ def _influence_route_to_helpers(
     inputs: Union[Tuple[Any, ...], DataLoader],
     k: Optional[int] = None,
     proponents: bool = True,
+    # pyre-fixme[2]: Parameter must be annotated.
     **kwargs,
 ) -> Union[Tensor, KMostInfluentialResults]:
     """
@@ -853,13 +887,16 @@ def _parameter_add(
     return tuple(param_1 + param_2 for (param_1, param_2) in zip(params_1, params_2))
 
 
-def _parameter_multiply(params: Tuple[Tensor, ...], c: Tensor) -> Tuple[Tensor, ...]:
+def _parameter_multiply(
+    params: Tuple[Tensor, ...], c: Union[Tensor, float]
+) -> Tuple[Tensor, ...]:
     """
     multiplies all tensors in a tuple of tensors by a given scalar
     """
     return tuple(param * c for param in params)
 
 
+# pyre-fixme[2]: Parameter must be annotated.
 def _parameter_to(params: Tuple[Tensor, ...], **to_kwargs) -> Tuple[Tensor, ...]:
     """
     applies the `to` method to all tensors in a tuple of tensors
@@ -885,6 +922,7 @@ def _compute_jacobian_sample_wise_grads_per_batch(
     influence_inst: Union["TracInCP", "InfluenceFunctionBase"],
     inputs: Tuple[Any, ...],
     targets: Optional[Tensor] = None,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]] = None,
     reduction_type: Optional[str] = "none",
     test: bool = False,
@@ -974,11 +1012,12 @@ def _compute_jacobian_wrt_params_vectorized(
 
 
 def _compute_batch_loss_influence_function_base(
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]],
     input: Any,
     target: Any,
     reduction_type: str,
-):
+) -> Tensor:
     """
     In implementations of `InfluenceFunctionBase`, we need to compute the total loss
     for a batch given `loss_fn`, whose reduction can either be 'none', 'sum', or
@@ -1018,7 +1057,10 @@ def _compute_batch_loss_influence_function_base(
                 "`reduction='sum'` loss function, or a `reduction='none'` "
                 "and set `sample_grads_per_batch` to false."
             )
-            warnings.warn(msg)
+            warnings.warn(
+                msg,
+                stacklevel=1,
+            )
         return _loss * multiplier
     elif reduction_type == "sum":
         return _loss
@@ -1029,6 +1071,7 @@ def _compute_batch_loss_influence_function_base(
         raise Exception
 
 
+# pyre-fixme[2]: Parameter must be annotated.
 def _set_attr(obj, names, val) -> None:
     if len(names) == 1:
         setattr(obj, names[0], val)
@@ -1036,6 +1079,7 @@ def _set_attr(obj, names, val) -> None:
         _set_attr(getattr(obj, names[0]), names[1:], val)
 
 
+# pyre-fixme[2]: Parameter must be annotated.
 def _del_attr(obj, names) -> None:
     if len(names) == 1:
         delattr(obj, names[0])
@@ -1043,6 +1087,8 @@ def _del_attr(obj, names) -> None:
         _del_attr(getattr(obj, names[0]), names[1:])
 
 
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def _model_make_functional(model, param_names, params):
     params = tuple([param.detach().requires_grad_() for param in params])
 
@@ -1052,6 +1098,7 @@ def _model_make_functional(model, param_names, params):
     return params
 
 
+# pyre-fixme[2]: Parameter must be annotated.
 def _model_reinsert_params(model, param_names, params, register: bool = False) -> None:
     for param_name, param in zip(param_names, params):
         _set_attr(
@@ -1061,6 +1108,8 @@ def _model_reinsert_params(model, param_names, params, register: bool = False) -
         )
 
 
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def _custom_functional_call(model, d, features):
     param_names, params = zip(*list(d.items()))
     _params = _model_make_functional(model, param_names, params)
@@ -1070,6 +1119,8 @@ def _custom_functional_call(model, d, features):
     return out
 
 
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def _functional_call(model: Module, d: Dict[str, Tensor], features):
     """
     Makes a call to `model.forward`, which is treated as a function of the parameters
@@ -1095,6 +1146,8 @@ def _functional_call(model: Module, d: Dict[str, Tensor], features):
         return torch.func.functional_call(model, d, features)
 
 
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def _dataset_fn(dataloader, batch_fn, reduce_fn, *batch_fn_args, **batch_fn_kwargs):
     """
     Applies `batch_fn` to each batch in `dataloader`, reducing the results using
@@ -1104,6 +1157,9 @@ def _dataset_fn(dataloader, batch_fn, reduce_fn, *batch_fn_args, **batch_fn_kwar
     """
     _dataloader = iter(dataloader)
 
+    # pyre-fixme[53]: Captured variable `batch_fn` is not annotated.
+    # pyre-fixme[53]: Captured variable `reduce_fn` is not annotated.
+    # pyre-fixme[3]: Return type must be annotated.
     def _reduce_fn(_result, _batch):
         return reduce_fn(_result, batch_fn(_batch, *batch_fn_args, **batch_fn_kwargs))
 

@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import warnings
 from collections import namedtuple
 from typing import (
@@ -33,6 +40,7 @@ MetricResultType = TypeVar(
 
 
 class AttackInfo(NamedTuple):
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     attack_fn: Union[Perturbation, Callable]
     name: str
     num_attempts: int
@@ -41,6 +49,8 @@ class AttackInfo(NamedTuple):
     additional_args: List[str]
 
 
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def agg_metric(inp):
     if isinstance(inp, Tensor):
         return inp.mean(dim=0)
@@ -59,8 +69,10 @@ class AttackComparator(Generic[MetricResultType]):
 
     def __init__(
         self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         forward_func: Callable,
         metric: Callable[..., MetricResultType],
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         preproc_fn: Optional[Callable] = None,
     ) -> None:
         r"""
@@ -92,18 +104,22 @@ class AttackComparator(Generic[MetricResultType]):
                 Default: ``None``
         """
         self.forward_func = forward_func
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         self.metric: Callable = metric
         self.preproc_fn = preproc_fn
         self.attacks: Dict[str, AttackInfo] = {}
         self.summary_results: Dict[str, Summarizer] = {}
+        # pyre-fixme[4]: Attribute must be annotated.
         self.metric_aggregator = agg_metric
         self.batch_stats = [Mean, Min, Max]
         self.aggregate_stats = [Mean]
         self.summary_results = {}
+        # pyre-fixme[4]: Attribute must be annotated.
         self.out_format = None
 
     def add_attack(
         self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         attack: Union[Perturbation, Callable],
         name: Optional[str] = None,
         num_attempts: int = 1,
@@ -172,7 +188,11 @@ class AttackComparator(Generic[MetricResultType]):
         )
 
     def _format_summary(
-        self, summary: Union[Dict, List[Dict]]
+        self,
+        # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+        #  `typing.Dict[<key type>, <value type>]` to avoid runtime subscripting
+        #  errors.
+        summary: Union[Dict, List[Dict]],
     ) -> Dict[str, MetricResultType]:
         r"""
         This method reformats a given summary; particularly for tuples,
@@ -184,6 +204,7 @@ class AttackComparator(Generic[MetricResultType]):
         if isinstance(summary, dict):
             return summary
         else:
+            # pyre-fixme[24]: Generic type `tuple` expects at least 1 type parameter.
             summary_dict: Dict[str, Tuple] = {}
             for key in summary[0]:
                 summary_dict[key] = tuple(s[key] for s in summary)
@@ -206,6 +227,7 @@ class AttackComparator(Generic[MetricResultType]):
     def _evaluate_batch(
         self,
         input_list: List[Any],
+        # pyre-fixme[24]: Generic type `tuple` expects at least 1 type parameter.
         additional_forward_args: Optional[Tuple],
         key_list: List[str],
         batch_summarizers: Dict[str, Summarizer],
@@ -236,12 +258,13 @@ class AttackComparator(Generic[MetricResultType]):
                 batch_summarizers[key_list[i]].update(out_metric)
                 current_count += batch_size
 
-    @log_usage()
+    @log_usage(part_of_slo=False)
     def evaluate(
         self,
         inputs: Any,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         perturbations_per_eval: int = 1,
+        # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> Dict[str, Union[MetricResultType, Dict[str, MetricResultType]]]:
         r"""
@@ -349,6 +372,10 @@ class AttackComparator(Generic[MetricResultType]):
                 [stat() for stat in self.aggregate_stats]
             )
 
+        # pyre-fixme[53]: Captured variable `batch_summarizers` is not annotated.
+        # pyre-fixme[53]: Captured variable `expanded_additional_args` is not annotated.
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def _check_and_evaluate(input_list, key_list):
             if len(input_list) == perturbations_per_eval:
                 self._evaluate_batch(
@@ -374,7 +401,8 @@ class AttackComparator(Generic[MetricResultType]):
             for key in attack.additional_args:
                 if key not in kwargs:
                     warnings.warn(
-                        f"Additional sample arg {key} not provided for {attack_key}"
+                        f"Additional sample arg {key} not provided for {attack_key}",
+                        stacklevel=1,
                     )
                 else:
                     additional_attack_args[key] = kwargs[key]
@@ -414,6 +442,11 @@ class AttackComparator(Generic[MetricResultType]):
     ) -> Dict[str, Union[MetricResultType, Dict[str, MetricResultType]]]:
         results: Dict[str, Union[MetricResultType, Dict[str, MetricResultType]]] = {
             ORIGINAL_KEY: self._format_summary(
+                # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+                #  `typing.Dict[<key type>, <value type>]` to avoid runtime
+                #  subscripting errors.
+                # pyre-fixme[24]: Generic type `list` expects 1 type parameter, use
+                #  `typing.List[<element type>]` to avoid runtime subscripting errors.
                 cast(Union[Dict, List], batch_summarizers[ORIGINAL_KEY].summary)
             )["mean"]
         }
@@ -423,6 +456,11 @@ class AttackComparator(Generic[MetricResultType]):
         for attack_key in self.attacks:
             attack = self.attacks[attack_key]
             attack_results = self._format_summary(
+                # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+                #  `typing.Dict[<key type>, <value type>]` to avoid runtime
+                #  subscripting errors.
+                # pyre-fixme[24]: Generic type `list` expects 1 type parameter, use
+                #  `typing.List[<element type>]` to avoid runtime subscripting errors.
                 cast(Union[Dict, List], batch_summarizers[attack.name].summary)
             )
             results[attack.name] = attack_results
@@ -466,6 +504,11 @@ class AttackComparator(Generic[MetricResultType]):
         """
         return {
             key: self._format_summary(
+                # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+                #  `typing.Dict[<key type>, <value type>]` to avoid runtime
+                #  subscripting errors.
+                # pyre-fixme[24]: Generic type `list` expects 1 type parameter, use
+                #  `typing.List[<element type>]` to avoid runtime subscripting errors.
                 cast(Union[Dict, List], self.summary_results[key].summary)
             )
             for key in self.summary_results

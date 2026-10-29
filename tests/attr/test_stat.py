@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import random
-from typing import Callable, List
+from typing import Callable, Generator, List, Union
 
 import torch
 from captum.attr import Max, Mean, Min, MSE, StdDev, Sum, Summarizer, Var
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
 
 
-def get_values(n: int = 100, lo=None, hi=None, integers: bool = False):
+def get_values(
+    n: int = 100,
+    lo: Union[int, float] = 0.0,
+    hi: Union[int, float] = 1.0,
+    integers: bool = False,
+) -> Generator[Union[int, float], None, None]:
     for _ in range(n):
         if integers:
-            yield random.randint(lo, hi)
+            yield random.randint(int(lo), int(hi))
         else:
-            yield random.random() * (hi - lo) + lo
+            yield random.random() * (float(hi) - float(lo)) + float(lo)
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_div0(self) -> None:
         summarizer = Summarizer([Var(), Mean()])
@@ -24,12 +37,16 @@ class Test(BaseTest):
 
         summarizer.update(torch.tensor(10))
         summ = summarizer.summary
+        # pyrefly: ignore [bad-index, unsupported-operation]
         assertTensorAlmostEqual(self, summ["mean"], 10)
+        # pyrefly: ignore [bad-index, unsupported-operation]
         assertTensorAlmostEqual(self, summ["variance"], 0)
 
         summarizer.update(torch.tensor(10))
         summ = summarizer.summary
+        # pyrefly: ignore [bad-index, unsupported-operation]
         assertTensorAlmostEqual(self, summ["mean"], 10)
+        # pyrefly: ignore [bad-index, unsupported-operation]
         assertTensorAlmostEqual(self, summ["variance"], 0)
 
     def test_var_defin(self) -> None:
@@ -60,9 +77,11 @@ class Test(BaseTest):
 
             actual_var = torch.var(torch.tensor(values).double(), unbiased=False)
 
+            # pyrefly: ignore [bad-index, unsupported-operation]
             var = summ.summary["variance"]
 
             assertTensorAlmostEqual(self, var, actual_var)
+            # pyrefly: ignore [missing-attribute, unsupported-operation]
             self.assertTrue((var > 0).all())
 
     def test_multi_dim(self) -> None:
@@ -73,10 +92,17 @@ class Test(BaseTest):
         summarizer = Summarizer([Mean(), Var()])
         summarizer.update(x1)
         assertTensorAlmostEqual(
-            self, summarizer.summary["mean"], x1, delta=0.05, mode="max"
+            # pyrefly: ignore [bad-index, unsupported-operation]
+            self,
+            # pyrefly: ignore [bad-index, unsupported-operation]
+            summarizer.summary["mean"],
+            x1,
+            delta=0.05,
+            mode="max",
         )
         assertTensorAlmostEqual(
             self,
+            # pyrefly: ignore [bad-index, unsupported-operation]
             summarizer.summary["variance"],
             torch.zeros_like(x1),
             delta=0.05,
@@ -86,6 +112,7 @@ class Test(BaseTest):
         summarizer.update(x2)
         assertTensorAlmostEqual(
             self,
+            # pyrefly: ignore [bad-index, unsupported-operation]
             summarizer.summary["mean"],
             torch.tensor([1.5, 1.5, 2.5, 4]),
             delta=0.05,
@@ -93,6 +120,7 @@ class Test(BaseTest):
         )
         assertTensorAlmostEqual(
             self,
+            # pyrefly: ignore [bad-index, unsupported-operation]
             summarizer.summary["variance"],
             torch.tensor([0.25, 0.25, 0.25, 0]),
             delta=0.05,
@@ -102,6 +130,7 @@ class Test(BaseTest):
         summarizer.update(x3)
         assertTensorAlmostEqual(
             self,
+            # pyrefly: ignore [bad-index, unsupported-operation]
             summarizer.summary["mean"],
             torch.tensor([2, 2, 2, 4]),
             delta=0.05,
@@ -109,6 +138,7 @@ class Test(BaseTest):
         )
         assertTensorAlmostEqual(
             self,
+            # pyrefly: ignore [bad-index, unsupported-operation]
             summarizer.summary["variance"],
             torch.tensor([2.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0, 0]),
             delta=0.05,
@@ -142,7 +172,7 @@ class Test(BaseTest):
             "sum",
             "mse",
         ]
-        gt_fns: List[Callable] = [
+        gt_fns: List[Callable[[torch.Tensor], torch.Tensor]] = [
             torch.mean,
             lambda x: torch.var(x, unbiased=False),
             lambda x: torch.var(x, unbiased=True),
@@ -159,6 +189,7 @@ class Test(BaseTest):
             actual = gt(values)
             for x in values:
                 summ.update(x)
+            # pyrefly: ignore [bad-index, unsupported-operation]
             stat_val = summ.summary[name]
             # rounding errors is a serious issue (moreso for MSE)
             assertTensorAlmostEqual(self, stat_val, actual, delta=0.005)

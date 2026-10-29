@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from typing import Callable, List, Tuple
 
 import torch
@@ -9,9 +16,9 @@ from captum._utils.sample_gradient import (
     SampleGradientWrapper,
     SUPPORTED_MODULES,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
     BasicModel_ConvNet_One_Conv,
     BasicModel_ConvNetWithPaddingDilation,
     BasicModel_MultiLayer,
@@ -20,6 +27,7 @@ from torch import Tensor
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_sample_grads_linear_sum(self) -> None:
         model = BasicModel_MultiLayer(multi_input_module=True)
@@ -57,6 +65,7 @@ class Test(BaseTest):
         self,
         model: Module,
         inputs: Tuple[Tensor, ...],
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Callable,
         loss_type: str = "mean",
     ) -> None:
@@ -82,6 +91,7 @@ class Test(BaseTest):
                     )
                     assertTensorAlmostEqual(
                         self,
+                        # pyrefly: ignore [missing-attribute]
                         layer.bias.grad,
                         layer.bias.sample_grad[i],  # type: ignore
                         mode="max",

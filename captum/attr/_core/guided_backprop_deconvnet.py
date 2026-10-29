@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import warnings
-from typing import Any, List, Tuple, Union
+from typing import cast, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -38,12 +45,12 @@ class ModifiedReluGradientAttribution(GradientAttribution):
             " ReLU layers."
         )
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
     ) -> TensorOrTupleOfTensorsGeneric:
         r"""
         Computes attribution by overriding relu gradients. Based on constructor
@@ -57,27 +64,38 @@ class ModifiedReluGradientAttribution(GradientAttribution):
         # converting it into a tuple.
         is_inputs_tuple = _is_tuple(inputs)
 
-        inputs = _format_tensor_into_tuples(inputs)
-        gradient_mask = apply_gradient_requirements(inputs)
+        inputs_tuple = _format_tensor_into_tuples(inputs)
+        gradient_mask = apply_gradient_requirements(inputs_tuple)
 
         # set hooks for overriding ReLU gradients
         warnings.warn(
             "Setting backward hooks on ReLU activations."
-            "The hooks will be removed after the attribution is finished"
+            "The hooks will be removed after the attribution is finished",
+            stacklevel=1,
         )
         try:
             self.model.apply(self._register_hooks)
 
             gradients = self.gradient_func(
-                self.forward_func, inputs, target, additional_forward_args
+                self.forward_func, inputs_tuple, target, additional_forward_args
             )
         finally:
             self._remove_hooks()
 
-        undo_gradient_requirements(inputs, gradient_mask)
-        return _format_output(is_inputs_tuple, gradients)
+        undo_gradient_requirements(inputs_tuple, gradient_mask)
+        return cast(
+            TensorOrTupleOfTensorsGeneric, _format_output(is_inputs_tuple, gradients)
+        )
 
-    def _register_hooks(self, module: Module):
+    def attribute_future(self) -> None:
+        r"""
+        This method is not implemented for ModifiedReluGradientAttribution.
+        """
+        raise NotImplementedError(
+            "attribute_future is not implemented for ModifiedReluGradientAttribution"
+        )
+
+    def _register_hooks(self, module: Module) -> None:
         if isinstance(module, torch.nn.ReLU):
             hooks = _register_backward_hook(module, self._backward_hook, self)
             self.backward_hooks.extend(hooks)
@@ -87,16 +105,17 @@ class ModifiedReluGradientAttribution(GradientAttribution):
         module: Module,
         grad_input: Union[Tensor, Tuple[Tensor, ...]],
         grad_output: Union[Tensor, Tuple[Tensor, ...]],
-    ):
+    ) -> Union[Tuple[Tensor], Tensor]:
         to_override_grads = grad_output if self.use_relu_grad_output else grad_input
         if isinstance(to_override_grads, tuple):
+            # pyrefly: ignore [bad-return]
             return tuple(
-                F.relu(to_override_grad) for to_override_grad in to_override_grads
+                F.relu(to_override_grad) for to_override_grad in to_override_grads  # type: ignore # noqa: E501 line too long
             )
         else:
             return F.relu(to_override_grads)
 
-    def _remove_hooks(self):
+    def _remove_hooks(self) -> None:
         for hook in self.backward_hooks:
             hook.remove()
 
@@ -127,12 +146,12 @@ class GuidedBackprop(ModifiedReluGradientAttribution):
             self, model, use_relu_grad_output=False
         )
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
     ) -> TensorOrTupleOfTensorsGeneric:
         r"""
         Args:
@@ -236,12 +255,12 @@ class Deconvolution(ModifiedReluGradientAttribution):
         """
         ModifiedReluGradientAttribution.__init__(self, model, use_relu_grad_output=True)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
     ) -> TensorOrTupleOfTensorsGeneric:
         r"""
         Args:

@@ -1,11 +1,18 @@
 #!/usr/bin/env python3import
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 from typing import cast, Iterable
 
 import torch
 from captum.concept._core.concept import Concept
 from captum.concept._utils.data_iterator import dataset_to_dataloader
-from tests.helpers import BaseTest
+from captum.testing.helpers import BaseTest
 from torch.utils.data import IterableDataset
 
 
@@ -36,6 +43,7 @@ class CustomIterableDataset(IterableDataset):
         return mapped_itr
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_create_concepts_from_images(self) -> None:
         def get_tensor_from_filename(filename):

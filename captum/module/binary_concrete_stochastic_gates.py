@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import math
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from captum.module.stochastic_gates_base import StochasticGatesBase
@@ -14,14 +21,6 @@ def _torch_empty(batch_size: int, n_gates: int, device: torch.device) -> Tensor:
 # torch.fx is introduced in 1.8.0
 if hasattr(torch, "fx"):
     torch.fx.wrap(_torch_empty)
-
-
-def _logit(inp):
-    # torch.logit is introduced in 1.7.0
-    if hasattr(torch, "logit"):
-        return torch.logit(inp)
-    else:
-        return torch.log(inp) - torch.log(1 - inp)
 
 
 class BinaryConcreteStochasticGates(StochasticGatesBase):
@@ -64,12 +63,12 @@ class BinaryConcreteStochasticGates(StochasticGatesBase):
         n_gates: int,
         mask: Optional[Tensor] = None,
         reg_weight: float = 1.0,
-        temperature: float = 2.0 / 3,
+        temperature: float = 2 / 3,
         lower_bound: float = -0.1,
         upper_bound: float = 1.1,
         eps: float = 1e-8,
         reg_reduction: str = "sum",
-    ):
+    ) -> None:
         """
         Args:
             n_gates (int): number of gates.
@@ -124,22 +123,25 @@ class BinaryConcreteStochasticGates(StochasticGatesBase):
 
         assert (
             0 < temperature < 1
-        ), f"the temperature should be bwteen 0 and 1, received {temperature}"
+        ), f"the temperature should be between 0 and 1, received {temperature}"
         self.temperature = temperature
 
         assert (
             lower_bound < 0
-        ), f"the stretch lower bound should smaller than 0, received {lower_bound}"
+        ), f"the stretch lower bound should be smaller than 0, received {lower_bound}"
         self.lower_bound = lower_bound
+
         assert (
             upper_bound > 1
-        ), f"the stretch upper bound should larger than 1, received {upper_bound}"
+        ), f"the stretch upper bound should be larger than 1, received {upper_bound}"
         self.upper_bound = upper_bound
 
         self.eps = eps
 
         # pre-calculate the fixed term used in active prob
-        self.active_prob_offset = temperature * math.log(-lower_bound / upper_bound)
+        self.active_prob_offset: float = temperature * math.log(
+            -lower_bound / upper_bound
+        )
 
     def _sample_gate_values(self, batch_size: int) -> Tensor:
         """
@@ -157,7 +159,9 @@ class BinaryConcreteStochasticGates(StochasticGatesBase):
                 batch_size, self.n_gates, device=self.log_alpha_param.device
             )
             u.uniform_(self.eps, 1 - self.eps)
-            s = torch.sigmoid((_logit(u) + self.log_alpha_param) / self.temperature)
+            s = torch.sigmoid(
+                (torch.logit(u) + self.log_alpha_param) / self.temperature
+            )
 
         else:
             s = torch.sigmoid(self.log_alpha_param)
@@ -193,7 +197,9 @@ class BinaryConcreteStochasticGates(StochasticGatesBase):
         return torch.sigmoid(self.log_alpha_param - self.active_prob_offset)
 
     @classmethod
-    def _from_pretrained(cls, log_alpha_param: Tensor, *args, **kwargs):
+    def _from_pretrained(
+        cls, log_alpha_param: Tensor, *args: Any, **kwargs: Any
+    ) -> "BinaryConcreteStochasticGates":
         """
         Private factory method to create an instance with pretrained parameters
 

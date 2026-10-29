@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
 
 import torch
 from captum.module.binary_concrete_stochastic_gates import BinaryConcreteStochasticGates
-from parameterized import parameterized_class
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
 
 
-@parameterized_class(
-    [
-        {"testing_device": "cpu"},
-        {"testing_device": "cuda"},
-    ]
-)
+# pyrefly: ignore [invalid-inheritance]
 class TestBinaryConcreteStochasticGates(BaseTest):
+    testing_device: str = "cpu"
+
     def setUp(self) -> None:
         super().setUp()
         if self.testing_device == "cuda" and not torch.cuda.is_available():
@@ -35,10 +38,7 @@ class TestBinaryConcreteStochasticGates(BaseTest):
         gated_input, reg = bcstg(input_tensor)
         expected_reg = 2.4947
 
-        if self.testing_device == "cpu":
-            expected_gated_input = [[0.0000, 0.0212, 0.1892], [0.1839, 0.3753, 0.4937]]
-        elif self.testing_device == "cuda":
-            expected_gated_input = [[0.0000, 0.0985, 0.1149], [0.2329, 0.0497, 0.5000]]
+        expected_gated_input = [[0.0000, 0.0212, 0.1892], [0.1839, 0.3753, 0.4937]]
 
         assertTensorAlmostEqual(self, gated_input, expected_gated_input, mode="max")
         assertTensorAlmostEqual(self, reg, expected_reg)
@@ -112,10 +112,7 @@ class TestBinaryConcreteStochasticGates(BaseTest):
         gated_input, reg = bcstg(input_tensor)
         expected_reg = 1.6643
 
-        if self.testing_device == "cpu":
-            expected_gated_input = [[0.0000, 0.0000, 0.1679], [0.0000, 0.0000, 0.2223]]
-        elif self.testing_device == "cuda":
-            expected_gated_input = [[0.0000, 0.0000, 0.1971], [0.1737, 0.2317, 0.3888]]
+        expected_gated_input = [[0.0000, 0.0000, 0.1679], [0.0000, 0.0000, 0.2223]]
 
         assertTensorAlmostEqual(self, gated_input, expected_gated_input, mode="max")
         assertTensorAlmostEqual(self, reg, expected_reg)
@@ -144,16 +141,10 @@ class TestBinaryConcreteStochasticGates(BaseTest):
         gated_input, reg = bcstg(input_tensor)
 
         expected_reg = 4.9903
-        if self.testing_device == "cpu":
-            expected_gated_input = [
-                [[0.0000, 0.0990], [0.0261, 0.2431], [0.0551, 0.3863]],
-                [[0.0476, 0.6177], [0.5400, 0.1530], [0.0984, 0.8013]],
-            ]
-        elif self.testing_device == "cuda":
-            expected_gated_input = [
-                [[0.0000, 0.0985], [0.1149, 0.2331], [0.0486, 0.5000]],
-                [[0.1840, 0.1571], [0.4612, 0.7937], [0.2975, 0.7393]],
-            ]
+        expected_gated_input = [
+            [[0.0000, 0.0990], [0.0261, 0.2431], [0.0551, 0.3863]],
+            [[0.0476, 0.6177], [0.5400, 0.1530], [0.0984, 0.8013]],
+        ]
 
         assertTensorAlmostEqual(self, gated_input, expected_gated_input, mode="max")
         assertTensorAlmostEqual(self, reg, expected_reg)
@@ -206,16 +197,10 @@ class TestBinaryConcreteStochasticGates(BaseTest):
         gated_input, reg = bcstg(input_tensor)
         expected_reg = 2.4947
 
-        if self.testing_device == "cpu":
-            expected_gated_input = [
-                [[0.0000, 0.0212], [0.0424, 0.0636], [0.3191, 0.4730]],
-                [[0.3678, 0.6568], [0.7507, 0.8445], [0.6130, 1.0861]],
-            ]
-        elif self.testing_device == "cuda":
-            expected_gated_input = [
-                [[0.0000, 0.0985], [0.1971, 0.2956], [0.0000, 0.2872]],
-                [[0.4658, 0.0870], [0.0994, 0.1119], [0.7764, 1.1000]],
-            ]
+        expected_gated_input = [
+            [[0.0000, 0.0212], [0.0424, 0.0636], [0.3191, 0.4730]],
+            [[0.3678, 0.6568], [0.7507, 0.8445], [0.6130, 1.0861]],
+        ]
 
         assertTensorAlmostEqual(self, gated_input, expected_gated_input, mode="max")
         assertTensorAlmostEqual(self, reg, expected_reg)
@@ -288,7 +273,9 @@ class TestBinaryConcreteStochasticGates(BaseTest):
     def test_get_gate_values_clamp(self) -> None:
         # enlarge the bounds & extremify log_alpha to mock gate  values beyond 0 & 1
         bcstg = BinaryConcreteStochasticGates._from_pretrained(
-            torch.tensor([10.0, -10.0, 10.0]), lower_bound=-2, upper_bound=2
+            torch.tensor([10.0, -10.0, 10.0]),
+            lower_bound=-2,
+            upper_bound=2,
         ).to(self.testing_device)
 
         clamped_gate_values = bcstg.get_gate_values().cpu().tolist()

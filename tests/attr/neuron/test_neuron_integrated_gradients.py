@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 import unittest
 from typing import Any, Callable, Tuple, Union
 
@@ -9,12 +16,12 @@ from captum.attr._core.integrated_gradients import IntegratedGradients
 from captum.attr._core.neuron.neuron_integrated_gradients import (
     NeuronIntegratedGradients,
 )
-from tests.helpers.basic import (
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
     BasicModel_ConvNet,
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_MultiInput,
@@ -168,7 +175,9 @@ class Test(BaseTest):
         input_attrib = IntegratedGradients(model)
         ig_attrib = NeuronIntegratedGradients(model, output_layer)
         for i in range(out.shape[1]):
-            ig_vals = input_attrib.attribute(test_input, target=i, baselines=baseline)
+            ig_vals = input_attrib.attribute(  # type: ignore[has-type]
+                test_input, target=i, baselines=baseline
+            )
             neuron_ig_vals = ig_attrib.attribute(test_input, (i,), baselines=baseline)
             assertTensorAlmostEqual(
                 self, ig_vals, neuron_ig_vals, delta=0.001, mode="max"

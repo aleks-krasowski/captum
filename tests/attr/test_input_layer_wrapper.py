@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import functools
 import inspect
-from typing import Callable, Dict, Tuple
+from typing import Any, Dict, List, Tuple, Type
 
 import torch
 from captum._utils.gradient import _forward_layer_eval
@@ -21,12 +28,13 @@ from captum.attr import (
     LayerIntegratedGradients,
 )
 from captum.attr._utils.input_layer_wrapper import ModelInputWrapper
-from tests.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest
+from captum.testing.helpers.basic_models import (
     BasicModel,
     BasicModel_MultiLayer_TrueMultiInput,
     MixedKwargsAndArgsModule,
 )
+from torch import Tensor
 from torch.nn import Module
 
 layer_methods_to_test_with_equiv = [
@@ -42,7 +50,9 @@ layer_methods_to_test_with_equiv = [
 
 
 class InputLayerMeta(type):
-    def __new__(metacls, name: str, bases: Tuple, attrs: Dict):
+    def __new__(
+        metacls, name: str, bases: Tuple[Type[Any], ...], attrs: Dict[str, Any]
+    ) -> "InputLayerMeta":
         for (
             layer_method,
             equiv_method,
@@ -54,7 +64,7 @@ class InputLayerMeta(type):
                     + f"_{equiv_method.__name__}_{multi_layer}"
                 )
                 attrs[test_name] = (
-                    lambda self: self.layer_method_with_input_layer_patches(
+                    lambda self, layer_method=layer_method, equiv_method=equiv_method, multi_layer=multi_layer: self.layer_method_with_input_layer_patches(  # noqa: E501
                         layer_method, equiv_method, multi_layer
                     )
                 )
@@ -74,8 +84,8 @@ class TestInputLayerWrapper(BaseTest, metaclass=InputLayerMeta):
 
     def layer_method_with_input_layer_patches(
         self,
-        layer_method_class: Callable,
-        equiv_method_class: Callable,
+        layer_method_class: Type[Any],
+        equiv_method_class: Type[Any],
         multi_layer: bool,
     ) -> None:
         model = BasicModel_MultiLayer_TrueMultiInput() if multi_layer else BasicModel()
@@ -105,8 +115,14 @@ class TestInputLayerWrapper(BaseTest, metaclass=InputLayerMeta):
 
         real_attributions = equivalent_method.attribute(*args_to_use, target=0)
 
-        if not isinstance(a1, tuple):
+        if isinstance(a1, list):
+            a1 = tuple(a1)
+        elif not isinstance(a1, tuple):
             a1 = (a1,)
+
+        if isinstance(a2, list):
+            a2 = tuple(a2)
+        elif not isinstance(a2, tuple):
             a2 = (a2,)
 
         if not isinstance(real_attributions, tuple):
@@ -116,7 +132,7 @@ class TestInputLayerWrapper(BaseTest, metaclass=InputLayerMeta):
         assertTensorTuplesAlmostEqual(self, a1, real_attributions)
 
     def forward_eval_layer_with_inputs_helper(
-        self, model: Module, inputs_to_test
+        self, model: Module, inputs_to_test: Dict[str, Tensor]
     ) -> None:
         # hard coding for simplicity
         # 0 if using args, 1 if using kwargs
@@ -134,7 +150,10 @@ class TestInputLayerWrapper(BaseTest, metaclass=InputLayerMeta):
 
         model = ModelInputWrapper(model)
 
-        def forward_func(*args, args_or_kwargs=None):
+        def forward_func(
+            *args: Tensor, args_or_kwargs: List[int] | None = None
+        ) -> Tensor:
+            assert args_or_kwargs is not None
             # convert to args or kwargs to test *args and **kwargs wrapping behavior
             new_args = []
             new_kwargs = {}

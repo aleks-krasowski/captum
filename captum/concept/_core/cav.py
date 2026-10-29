@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+
 import os
+import pickle
+import warnings
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import torch
 from captum.concept._core.concept import Concept
 from captum.concept._utils.common import concepts_to_str
@@ -87,7 +97,7 @@ class CAV:
         file_name = concepts_to_str(concepts) + "-" + layer + ".pkl"
         return os.path.join(path, model_id, file_name)
 
-    def save(self):
+    def save(self) -> None:
         r"""
         Saves a dictionary of the CAV computed values into a pickle file in the
         location returned by the "assemble_save_path" static methods. The
@@ -109,13 +119,28 @@ class CAV:
             "concept_ids": [c.id for c in self.concepts],
             "concept_names": [c.name for c in self.concepts],
             "layer": self.layer,
-            "stats": self.stats,
+            "stats": self._format_for_weights_only_load(self.stats),
         }
 
         cavs_path = CAV.assemble_save_path(
             self.save_path, self.model_id, self.concepts, self.layer
         )
         torch.save(save_dict, cavs_path)
+
+    @staticmethod
+    def _format_for_weights_only_load(value: Any) -> Any:
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, dict):
+            return {
+                key: CAV._format_for_weights_only_load(val)
+                for key, val in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [CAV._format_for_weights_only_load(val) for val in value]
+        return value
 
     @staticmethod
     def create_cav_dir_if_missing(save_path: str, model_id: str) -> None:
@@ -134,7 +159,9 @@ class CAV:
             os.makedirs(cav_model_id_path)
 
     @staticmethod
-    def load(cavs_path: str, model_id: str, concepts: List[Concept], layer: str):
+    def load(
+        cavs_path: str, model_id: str, concepts: List[Concept], layer: str
+    ) -> Optional["CAV"]:
         r"""
         Loads CAV dictionary from a pickle file for given input
         `layer` and `concepts`.
@@ -162,7 +189,46 @@ class CAV:
         cavs_path = CAV.assemble_save_path(cavs_path, model_id, concepts, layer)
 
         if os.path.exists(cavs_path):
-            save_dict = torch.load(cavs_path)
+            ctx: AbstractContextManager[None, None]
+            if hasattr(torch.serialization, "safe_globals"):
+                safe_globals: List[Any] = [np.ndarray, np.dtype]
+                for numpy_core in (
+                    getattr(np, "core", None),
+                    getattr(np, "_core", None),
+                ):
+                    multiarray = getattr(numpy_core, "multiarray", None)
+                    reconstruct = getattr(multiarray, "_reconstruct", None)
+                    if reconstruct is not None and reconstruct not in safe_globals:
+                        safe_globals.append(reconstruct)
+                for dtype_name in (
+                    "float32",
+                    "float64",
+                    "int32",
+                    "int64",
+                    "uint32",
+                    "uint64",
+                ):
+                    dtype_cls = type(np.dtype(dtype_name))
+                    if dtype_cls not in safe_globals:
+                        safe_globals.append(dtype_cls)
+                ctx = torch.serialization.safe_globals(safe_globals)
+            else:
+                # safe globals not in existence in this version of torch yet. Use a
+                # dummy context manager instead
+                ctx = nullcontext()
+            with ctx:
+                try:
+                    save_dict = torch.load(cavs_path, weights_only=True)
+                except pickle.UnpicklingError:
+                    if hasattr(torch.serialization, "safe_globals"):
+                        raise
+                    warnings.warn(
+                        "Unable to load CAV file with `weights_only=True` on this "
+                        "PyTorch version. Falling back to `weights_only=False` for "
+                        "backward compatibility with legacy CAV files.",
+                        stacklevel=2,
+                    )
+                    save_dict = torch.load(cavs_path, weights_only=False)
 
             concept_names = save_dict["concept_names"]
             concept_ids = save_dict["concept_ids"]

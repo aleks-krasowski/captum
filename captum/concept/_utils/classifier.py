@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+
 import random
 import warnings
 from abc import ABC, abstractmethod
@@ -64,7 +70,11 @@ class Classifier(ABC):
 
     @abstractmethod
     def train_and_eval(
-        self, dataloader: DataLoader, **kwargs: Any
+        self,
+        dataloader: DataLoader,
+        **kwargs: Any,
+        # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+        # `typing.Dict[<key type>, <value type>]` to avoid runtime subscripting errors.
     ) -> Union[Dict, None]:
         r"""
         This method is responsible for training a classifier using the data
@@ -132,12 +142,18 @@ class DefaultClassifier(Classifier):
             " both train and test datasets in the memory. Consider defining"
             " your own classifier that doesn't rely heavily on memory, for"
             " large number of concepts, by extending"
-            " `Classifer` abstract class"
+            " `Classifer` abstract class",
+            stacklevel=2,
         )
         self.lm = model.SkLearnSGDClassifier(alpha=0.01, max_iter=1000, tol=1e-3)
 
     def train_and_eval(
-        self, dataloader: DataLoader, test_split_ratio: float = 0.33, **kwargs: Any
+        self,
+        dataloader: DataLoader,
+        test_split_ratio: float = 0.33,
+        **kwargs: Any,
+        # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+        # `typing.Dict[<key type>, <value type>]` to avoid runtime subscripting errors.
     ) -> Union[Dict, None]:
         r"""
          Implements Classifier::train_and_eval abstract method for small concept
@@ -169,16 +185,21 @@ class DefaultClassifier(Classifier):
             inputs.append(input)
             labels.append(label)
 
+        # pyre-fixme[61]: `input` is undefined, or not always defined.
         device = "cpu" if input is None else input.device
         x_train, x_test, y_train, y_test = _train_test_split(
             torch.cat(inputs), torch.cat(labels), test_split=test_split_ratio
         )
-        self.lm.device = device
+        # error: Incompatible types in assignment (expression has type "str | Any",
+        # variable has type "Tensor | Module")  [assignment]
+        self.lm.device = device  # type: ignore
         self.lm.fit(DataLoader(TensorDataset(x_train, y_train)))
 
         predict = self.lm(x_test)
+        classes = self.lm.classes()
+        assert classes is not None
 
-        predict = self.lm.classes()[torch.argmax(predict, dim=1)]  # type: ignore
+        predict = _predict_classes(predict, classes)
         score = predict.long() == y_test.long().cpu()
 
         accs = score.float().mean()
@@ -218,6 +239,12 @@ class DefaultClassifier(Classifier):
             the model in the `train_and_eval` method.
         """
         return self.lm.classes().detach().numpy()  # type: ignore
+
+
+def _predict_classes(predict: Tensor, classes: Tensor) -> Tensor:
+    if len(classes) == 2 and predict.shape[1] == 1:
+        predict = torch.cat([-predict, predict], dim=1)
+    return classes[torch.argmax(predict, dim=1).cpu()]
 
 
 def _train_test_split(

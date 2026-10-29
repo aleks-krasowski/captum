@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+
 import glob
 import os
 from typing import Callable, Iterator
@@ -13,6 +19,7 @@ class CustomIterableDataset(IterableDataset):
     An auxiliary class for iterating through a dataset.
     """
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     def __init__(self, transform_filename_to_tensor: Callable, path: str) -> None:
         r"""
         Args:
@@ -21,6 +28,7 @@ class CustomIterableDataset(IterableDataset):
             path (str): Path to dataset files. This can be either a path to a
                         directory or a file where input examples are stored.
         """
+        # pyre-fixme[4]: Attribute must be annotated.
         self.file_itr = None
         self.path = path
 

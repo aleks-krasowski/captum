@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-from typing import Any, Callable, cast, Generic, List, Tuple, Type, Union
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+from typing import Any, Callable, cast, Generic, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -28,6 +35,7 @@ class Attribution:
     to extend and override core `attribute` method.
     """
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     def __init__(self, forward_func: Callable) -> None:
         r"""
         Args:
@@ -37,6 +45,8 @@ class Attribution:
         """
         self.forward_func = forward_func
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    # pyre-fixme[13]: Attribute `attribute` is never initialized.
     attribute: Callable
     r"""
     This method computes and returns the attribution values for each input tensor.
@@ -67,8 +77,40 @@ class Attribution:
 
     """
 
+    # pyre-fixme[24] Generic type `Callable` expects 2 type parameters.
+    # pyre-fixme[13]: Attribute `attribute_future` is never initialized.
+    attribute_future: Callable
+
+    r"""
+    This method computes and returns a Future of attribution values for each input
+    tensor. Deriving classes are responsible for implementing its logic accordingly.
+
+    Specific attribution algorithms that extend this class take relevant
+    arguments.
+
+    Args:
+
+        inputs (Tensor or tuple[Tensor, ...]): Input for which attribution
+                    is computed. It can be provided as a single tensor or
+                    a tuple of multiple tensors. If multiple input tensors
+                    are provided, the batch sizes must be aligned across all
+                    tensors.
+
+
+    Returns:
+
+        *Future[Tensor]* or *Future[tuple[Tensor, ...]]* of **attributions**:
+        - **attributions** (*Future[Tensor]* or *Future[tuple[Tensor, ...]]*):
+                    Future of attribution values for each input tensor.
+                    The results should be the same as the attribute
+                    method, except that the results are returned as a Future.
+                    If a single tensor is provided as inputs, a single Future tensor
+                    is returned. If a tuple is provided for inputs, a Future of a
+                    tuple of corresponding sized tensors is returned.
+    """
+
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return False
 
     def has_convergence_delta(self) -> bool:
@@ -88,6 +130,8 @@ class Attribution:
         """
         return False
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    # pyre-fixme[13]: Attribute `compute_convergence_delta` is never initialized.
     compute_convergence_delta: Callable
     r"""
     The attribution algorithms which derive `Attribution` class and provide
@@ -146,6 +190,7 @@ class GradientAttribution(Attribution):
     that we want to interpret or the model itself.
     """
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     def __init__(self, forward_func: Callable) -> None:
         r"""
         Args:
@@ -155,9 +200,10 @@ class GradientAttribution(Attribution):
                         function.
         """
         Attribution.__init__(self, forward_func)
+        # pyre-fixme[4]: Attribute must be annotated.
         self.gradient_func = compute_gradients
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def compute_convergence_delta(
         self,
         attributions: Union[Tensor, Tuple[Tensor, ...]],
@@ -166,7 +212,7 @@ class GradientAttribution(Attribution):
         ],
         end_point: Union[Tensor, Tuple[Tensor, ...]],
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
     ) -> Tensor:
         r"""
         Here we provide a specific implementation for `compute_convergence_delta`
@@ -307,6 +353,11 @@ class PerturbationAttribution(Attribution):
     that we want to interpret or the model itself.
     """
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._raise_if_runs_with_grad()
+
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     def __init__(self, forward_func: Callable) -> None:
         r"""
         Args:
@@ -318,11 +369,42 @@ class PerturbationAttribution(Attribution):
         Attribution.__init__(self, forward_func)
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return True
 
+    @staticmethod
+    def _is_decorated_with_no_grad(method: object) -> bool:
+        # torch.no_grad()(fn) closes over the context manager itself, so the
+        # decorator is identified by the object rather than by any name torch
+        # may change.
+        while method is not None:
+            for cell in getattr(method, "__closure__", None) or ():
+                try:
+                    closed_over = cell.cell_contents
+                except ValueError:
+                    continue
+                if isinstance(
+                    getattr(closed_over, "__self__", closed_over), torch.no_grad
+                ):
+                    return True
+            method = getattr(method, "__wrapped__", None)
+        return False
 
-class InternalAttribution(Attribution, Generic[ModuleOrModuleList]):
+    @classmethod
+    def _raise_if_runs_with_grad(cls) -> None:
+        method = cls.__dict__.get("attribute")
+        if method is None or cls._is_decorated_with_no_grad(method):
+            return
+        raise TypeError(
+            f"{cls.__module__}.{cls.__qualname__}.attribute should be decorated "
+            "with @torch.no_grad() to avoid wasting memory on an autograd graph "
+            "that perturbation attribution never differentiates."
+        )
+
+
+# mypy false positive "Free type variable expected in Generic[...]" but
+# ModuleOrModuleList is a TypeVar
+class InternalAttribution(Attribution, Generic[ModuleOrModuleList]):  # type: ignore
     r"""
     Shared base class for LayerAttrubution and NeuronAttribution,
     attribution types that require a model and a particular layer.
@@ -332,6 +414,7 @@ class InternalAttribution(Attribution, Generic[ModuleOrModuleList]):
 
     def __init__(
         self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         forward_func: Callable,
         layer: ModuleOrModuleList,
         device_ids: Union[None, List[int]] = None,
@@ -355,6 +438,7 @@ class InternalAttribution(Attribution, Generic[ModuleOrModuleList]):
         self.device_ids = device_ids
 
 
+# pyre-fixme[24]: Generic type `InternalAttribution` expects 1 type parameter.
 class LayerAttribution(InternalAttribution):
     r"""
     Layer attribution provides attribution values for the given layer, quantifying
@@ -365,6 +449,7 @@ class LayerAttribution(InternalAttribution):
 
     def __init__(
         self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         forward_func: Callable,
         layer: ModuleOrModuleList,
         device_ids: Union[None, List[int]] = None,
@@ -422,6 +507,7 @@ class LayerAttribution(InternalAttribution):
         return F.interpolate(layer_attribution, interpolate_dims, mode=interpolate_mode)
 
 
+# pyre-fixme[24]: Generic type `InternalAttribution` expects 1 type parameter.
 class NeuronAttribution(InternalAttribution):
     r"""
     Neuron attribution provides input attribution for a given neuron, quantifying
@@ -435,6 +521,7 @@ class NeuronAttribution(InternalAttribution):
 
     def __init__(
         self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         forward_func: Callable,
         layer: Module,
         device_ids: Union[None, List[int]] = None,
@@ -455,6 +542,8 @@ class NeuronAttribution(InternalAttribution):
         """
         InternalAttribution.__init__(self, forward_func, layer, device_ids)
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    # pyre-fixme[13]: Attribute `attribute` is never initialized.
     attribute: Callable
     r"""
     This method computes and returns the neuron attribution values for each

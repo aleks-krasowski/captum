@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 from __future__ import print_function
 
 from typing import Tuple, Union
@@ -7,13 +14,13 @@ from typing import Tuple, Union
 import torch
 from captum._utils.typing import TensorOrTupleOfTensorsGeneric
 from captum.attr._core.neuron.neuron_deep_lift import NeuronDeepLift, NeuronDeepLiftShap
-from tests.attr.helpers.neuron_layer_testing_util import (
+from captum.testing.attr.helpers.neuron_layer_testing_util import (
     create_inps_and_base_for_deeplift_neuron_layer_testing,
     create_inps_and_base_for_deepliftshap_neuron_layer_testing,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
     BasicModel_ConvNet,
     BasicModel_ConvNet_MaxPool3d,
     LinearMaxPoolLinearModel,
@@ -22,6 +29,7 @@ from tests.helpers.basic_models import (
 from torch import Tensor
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_relu_neuron_deeplift(self) -> None:
         model = ReLULinearModel(inplace=True)

@@ -1,35 +1,41 @@
 #!/usr/bin/env fbpython
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import math
-from typing import cast
+from typing import Callable, cast, Dict, List, Optional, Tuple, Union
 from unittest.mock import Mock, patch
 
 import torch
-
 from captum.attr._core.dataloader_attr import DataLoaderAttribution, InputRole
 from captum.attr._core.feature_ablation import FeatureAblation
-from parameterized import parameterized
-from tests.helpers.basic import (
+from captum.testing.helpers.basic import (
     assertAttributionComparision,
     assertTensorAlmostEqual,
     BaseTest,
 )
+from parameterized import parameterized
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 
 
-def sum_forward(*inps) -> Tensor:
-    inps = [torch.flatten(inp, start_dim=1) for inp in inps]
-    return torch.cat(inps, dim=1).sum(1)
+def sum_forward(*inps: Tensor) -> Tensor:
+    flat_inps = [torch.flatten(inp, start_dim=1) for inp in inps]
+    return torch.cat(flat_inps, dim=1).sum(1)
 
 
 class Linear(torch.nn.Module):
-    def __init__(self, n) -> None:
+    def __init__(self, n: int) -> None:
         super().__init__()
         self.linear = torch.nn.Linear(n, 1)
 
-    def forward(self, *inps):
-        inps = [torch.flatten(inp, start_dim=1) for inp in inps]
-        return self.linear(torch.cat(inps, dim=1))
+    def forward(self, *inps: Tensor) -> Tensor:
+        flat_inps = [torch.flatten(inp, start_dim=1) for inp in inps]
+        return self.linear(torch.cat(flat_inps, dim=1))
 
 
 mock_dataset = TensorDataset(
@@ -73,7 +79,7 @@ class Test(BaseTest):
             (Linear(7),),
         ]
     )
-    def test_dl_attr(self, forward) -> None:
+    def test_dl_attr(self, forward: Callable[..., Tensor]) -> None:
         fa = FeatureAblation(forward)
         dl_fa = DataLoaderAttribution(fa)
 
@@ -99,7 +105,7 @@ class Test(BaseTest):
             (Linear(7),),
         ]
     )
-    def test_dl_attr_with_mask(self, forward) -> None:
+    def test_dl_attr_with_mask(self, forward: Callable[..., Tensor]) -> None:
         # FeatureAblation does not support grouping across tensors for now
         # add such test cases after support grouping across tensors in FeatureAblation
         masks = (
@@ -133,7 +139,7 @@ class Test(BaseTest):
             (Linear(7),),
         ]
     )
-    def test_dl_attr_with_baseline(self, forward) -> None:
+    def test_dl_attr_with_baseline(self, forward: Callable[..., Tensor]) -> None:
         baselines = (
             torch.tensor([[0, -1]]),
             1,
@@ -161,28 +167,33 @@ class Test(BaseTest):
 
     def test_dl_attr_with_reduce_and_to_metric(self) -> None:
         forward = sum_forward
-        func_call_counts = {
+        func_call_counts: Dict[str, int] = {
             "reduce": 0,
             "to_metric": 0,
         }
 
-        def reduce(accum, cur_output, cur_inputs):
+        def reduce(
+            accum: Optional[Dict[str, Union[int, Tensor]]],
+            cur_output: Tensor,
+            cur_inputs: Tuple[Tensor, ...],
+        ) -> Dict[str, Union[int, Tensor]]:
             func_call_counts["reduce"] += 1
 
-            accum = {"sum": 0, "count": 0} if accum is None else accum
-
-            accum["sum"] += cur_output.sum()
-            accum["count"] += len(cur_output)
+            if accum is None:
+                accum = {"sum": cur_output.sum(), "count": len(cur_output)}
+            else:
+                accum["sum"] = accum["sum"] + cur_output.sum()
+                accum["count"] = int(accum["count"]) + len(cur_output)
 
             return accum
 
-        def to_metric(accum):
+        def to_metric(accum: Dict[str, Union[int, Tensor]]) -> Tensor:
             func_call_counts["to_metric"] += 1
 
             self.assertEqual(isinstance(accum, dict), True)
             return torch.tensor(
                 [
-                    accum["sum"] / accum["count"],
+                    cast(Tensor, accum["sum"]) / accum["count"],
                     accum["sum"],
                 ]
             )
@@ -226,18 +237,20 @@ class Test(BaseTest):
             ([0, 2, 2],),
         ]
     )
-    def test_dl_attr_with_input_roles(self, input_roles) -> None:
-        n_inputs = len(input_roles)
-        n_forward_inputs = sum(1 for r in input_roles if r != InputRole.no_forward)
-        n_attr_inputs = sum(1 for r in input_roles if r == InputRole.need_attr)
+    def test_dl_attr_with_input_roles(self, input_roles: List[int]) -> None:
+        n_inputs: int = len(input_roles)
+        n_forward_inputs: int = sum(1 for r in input_roles if r != InputRole.no_forward)
+        n_attr_inputs: int = sum(1 for r in input_roles if r == InputRole.need_attr)
 
-        def reduce(accum, cur_output, cur_inputs):
+        def reduce(
+            accum: Optional[Tensor], cur_output: Tensor, cur_inputs: Tuple[Tensor, ...]
+        ) -> Tensor:
             # all inputs from dataloader should be given to reduce
             self.assertEqual(len(cur_inputs), n_inputs)
 
             return cur_output if accum is None else torch.cat([accum, cur_output])
 
-        def forward(*forward_inputs):
+        def forward(*forward_inputs: Tensor) -> Tensor:
             # inputs of InputRole.no_forward should not be passed to forward
             self.assertEqual(len(forward_inputs), n_forward_inputs)
             return sum_forward(*forward_inputs)
@@ -250,7 +263,7 @@ class Test(BaseTest):
 
         dl_attributions = dl_fa.attribute(
             dataloader,
-            input_roles=input_roles,
+            input_roles=tuple(input_roles),
             reduce=reduce,
         )
 
@@ -371,3 +384,12 @@ class Test(BaseTest):
         )
 
         assertAttributionComparision(self, dl_attributions, expected_attr)
+
+    def test_futures_not_implemented(self) -> None:
+        forward = sum_forward
+        fa = FeatureAblation(forward)
+        dl_fa = DataLoaderAttribution(fa)
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = dl_fa.attribute_future()
+        self.assertEqual(attributions, None)

@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 from typing import cast, List
 
 import torch
 from captum.robust import MinParamPerturbation
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel, BasicModel_MultiLayer
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicModel, BasicModel_MultiLayer
 from torch import Tensor
 
 
@@ -39,6 +46,7 @@ def alt_correct_fn(model_out: Tensor, target: int, threshold: float) -> bool:
     return False
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_minimal_pert_basic_linear(self) -> None:
         model = BasicModel()

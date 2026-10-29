@@ -1,19 +1,25 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 import tempfile
 from typing import Callable
 
 import torch.nn as nn
 from captum.influence._core.tracincp import TracInCP
 from captum.influence._core.tracincp_fast_rand_proj import TracInCPFast
-
-from parameterized import parameterized
-from tests.helpers import BaseTest
-from tests.helpers.influence.common import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.influence.common import (
     build_test_name_func,
     DataInfluenceConstructor,
     get_random_model_and_data,
 )
+from parameterized import parameterized
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestTracinValidator(BaseTest):
 
     param_list = [
@@ -44,6 +50,7 @@ class TestTracinValidator(BaseTest):
         influence methods required `inputs_dataset`.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,
@@ -69,6 +76,7 @@ class TestTracinValidator(BaseTest):
         with a valid `final_fc_layer`.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,
@@ -101,6 +109,7 @@ class TestTracinValidator(BaseTest):
         """
         with tempfile.TemporaryDirectory() as invalid_tmpdir:
             with tempfile.TemporaryDirectory() as tmpdir:
+                # pyrefly: ignore [bad-unpacking]
                 (
                     net,
                     train_dataset,

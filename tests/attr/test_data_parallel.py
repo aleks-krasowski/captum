@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import copy
 import os
 from enum import Enum
-from typing import Any, Callable, cast, Dict, Optional, Tuple, Type
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Type
 
 import torch
 import torch.distributed as dist
@@ -16,14 +23,18 @@ from captum.attr._core.neuron.neuron_guided_backprop_deconvnet import (
 )
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._utils.attribution import Attribution, InternalAttribution
-from tests.attr.helpers.gen_test_utils import (
+from captum.testing.attr.helpers.gen_test_utils import (
     gen_test_name,
     get_target_layer,
     parse_test_config,
     should_create_generated_test,
 )
-from tests.attr.helpers.test_config import config
-from tests.helpers.basic import assertTensorTuplesAlmostEqual, BaseTest, deep_copy_args
+from captum.testing.attr.helpers.test_config import config
+from captum.testing.helpers.basic import (
+    assertTensorTuplesAlmostEqual,
+    BaseTest,
+    deep_copy_args,
+)
 from torch import Tensor
 from torch.nn import Module
 
@@ -35,7 +46,7 @@ schema described there.
 """
 
 # Distributed Data Parallel env setup
-os.environ["MASTER_ADDR"] = "127.0.0.1"
+os.environ["MASTER_ADDR"] = "localhost"
 os.environ["MASTER_PORT"] = "29500"
 dist.init_process_group(backend="gloo", rank=0, world_size=1)
 
@@ -57,7 +68,9 @@ class DataParallelCompareMode(Enum):
 
 
 class DataParallelMeta(type):
-    def __new__(metacls, name: str, bases: Tuple, attrs: Dict):
+    def __new__(
+        metacls, name: str, bases: Tuple[Type[Any], ...], attrs: Dict[str, Any]
+    ) -> "DataParallelMeta":
         for test_config in config:
             (
                 algorithms,
@@ -114,13 +127,13 @@ class DataParallelMeta(type):
         noise_tunnel: bool,
         baseline_distr: bool,
         mode: DataParallelCompareMode,
-    ) -> Callable:
+    ) -> Callable[[BaseTest], None]:
         """
         This method creates a single Data Parallel / GPU test for the given
         algorithm and parameters.
         """
 
-        def data_parallel_test_assert(self) -> None:
+        def data_parallel_test_assert(self: BaseTest) -> None:
             # Construct cuda_args, moving all tensor inputs in args to CUDA device
             cuda_args = {}
             for key in args:
@@ -134,91 +147,22 @@ class DataParallelMeta(type):
                 else:
                     cuda_args[key] = args[key]
 
-            alt_device_ids = None
             cuda_model = copy.deepcopy(model).cuda()
-            # Initialize models based on DataParallelCompareMode
-            if mode is DataParallelCompareMode.cpu_cuda:
-                model_1, model_2 = model, cuda_model
-                args_1, args_2 = args, cuda_args
-            elif mode is DataParallelCompareMode.data_parallel_default:
-                model_1, model_2 = (
-                    cuda_model,
-                    torch.nn.parallel.DataParallel(cuda_model),
-                )
-                args_1, args_2 = cuda_args, cuda_args
-            elif mode is DataParallelCompareMode.data_parallel_alt_dev_ids:
-                alt_device_ids = [0] + [
-                    x for x in range(torch.cuda.device_count() - 1, 0, -1)
-                ]
-                model_1, model_2 = (
-                    cuda_model,
-                    torch.nn.parallel.DataParallel(
-                        cuda_model, device_ids=alt_device_ids
-                    ),
-                )
-                args_1, args_2 = cuda_args, cuda_args
-            elif mode is DataParallelCompareMode.dist_data_parallel:
+            # Set up test arguments based on DataParallelCompareMode
+            model_1, model_2, args_1, args_2, alt_device_ids = _get_dp_test_args(
+                cuda_model, model, cuda_args, args, mode
+            )
 
-                model_1, model_2 = (
-                    cuda_model,
-                    torch.nn.parallel.DistributedDataParallel(
-                        cuda_model, device_ids=[0], output_device=0
-                    ),
-                )
-                args_1, args_2 = cuda_args, cuda_args
-            else:
-                raise AssertionError("DataParallel compare mode type is not valid.")
-
-            attr_method_1: Attribution
-            attr_method_2: Attribution
-            if target_layer:
-                internal_algorithm = cast(Type[InternalAttribution], algorithm)
-                attr_method_1 = internal_algorithm(
-                    model_1, get_target_layer(model_1, target_layer)
-                )
-                # cuda_model is used to obtain target_layer since DataParallel
-                # adds additional wrapper.
-                # model_2 is always either the CUDA model itself or DataParallel
-                if alt_device_ids is None:
-                    attr_method_2 = internal_algorithm(
-                        model_2, get_target_layer(cuda_model, target_layer)
-                    )
-                else:
-                    # LayerDeepLift and LayerDeepLiftShap do not take device ids
-                    # as a parameter, since they must always have the DataParallel
-                    # model object directly.
-                    # Some neuron methods and GuidedGradCAM also require the
-                    # model and cannot take a forward function.
-                    if issubclass(
-                        internal_algorithm,
-                        (
-                            LayerDeepLift,
-                            LayerDeepLiftShap,
-                            LayerLRP,
-                            NeuronDeepLift,
-                            NeuronDeepLiftShap,
-                            NeuronDeconvolution,
-                            NeuronGuidedBackprop,
-                            GuidedGradCam,
-                        ),
-                    ):
-                        attr_method_2 = internal_algorithm(
-                            model_2,
-                            get_target_layer(cuda_model, target_layer),  # type: ignore
-                        )
-                    else:
-                        attr_method_2 = internal_algorithm(
-                            model_2.forward,
-                            get_target_layer(cuda_model, target_layer),
-                            device_ids=alt_device_ids,
-                        )
-            else:
-                attr_method_1 = algorithm(model_1)
-                attr_method_2 = algorithm(model_2)
-
-            if noise_tunnel:
-                attr_method_1 = NoiseTunnel(attr_method_1)
-                attr_method_2 = NoiseTunnel(attr_method_2)
+            # Construct attribution methods
+            attr_method_1, attr_method_2 = _get_dp_attr_methods(
+                algorithm,
+                target_layer,
+                model_1,
+                model_2,
+                cuda_model,
+                alt_device_ids,
+                noise_tunnel,
+            )
             if attr_method_1.has_convergence_delta():
                 attributions_1, delta_1 = attr_method_1.attribute(
                     return_convergence_delta=True, **args_1
@@ -262,6 +206,107 @@ class DataParallelMeta(type):
                     )
 
         return data_parallel_test_assert
+
+
+def _get_dp_test_args(
+    cuda_model: Module,
+    model: Module,
+    cuda_args: Dict[str, Any],
+    args: Dict[str, Any],
+    mode: DataParallelCompareMode,
+) -> Tuple[Module, Module, Dict[str, Any], Dict[str, Any], Optional[List[int]]]:
+    # Initialize models based on DataParallelCompareMode
+    alt_device_ids = None
+    if mode is DataParallelCompareMode.cpu_cuda:
+        model_1, model_2 = model, cuda_model
+        args_1, args_2 = args, cuda_args
+    elif mode is DataParallelCompareMode.data_parallel_default:
+        model_1, model_2 = (
+            cuda_model,
+            torch.nn.parallel.DataParallel(cuda_model),
+        )
+        args_1, args_2 = cuda_args, cuda_args
+    elif mode is DataParallelCompareMode.data_parallel_alt_dev_ids:
+        alt_device_ids = [0] + list(range(torch.cuda.device_count() - 1, 0, -1))
+        model_1, model_2 = (
+            cuda_model,
+            torch.nn.parallel.DataParallel(cuda_model, device_ids=alt_device_ids),
+        )
+        args_1, args_2 = cuda_args, cuda_args
+    elif mode is DataParallelCompareMode.dist_data_parallel:
+
+        model_1, model_2 = (
+            cuda_model,
+            torch.nn.parallel.DistributedDataParallel(
+                cuda_model, device_ids=[0], output_device=0
+            ),
+        )
+        args_1, args_2 = cuda_args, cuda_args
+    else:
+        raise AssertionError("DataParallel compare mode type is not valid.")
+
+    return model_1, model_2, args_1, args_2, alt_device_ids
+
+
+def _get_dp_attr_methods(
+    algorithm: Type[Attribution],
+    target_layer: Optional[str],
+    model_1: Module,
+    model_2: Module,
+    cuda_model: Module,
+    alt_device_ids: Optional[List[int]],
+    noise_tunnel: bool,
+) -> Tuple[Attribution, Attribution]:
+    attr_method_1: Attribution
+    attr_method_2: Attribution
+    if target_layer:
+        internal_algorithm = cast(Type[InternalAttribution[Module]], algorithm)
+        attr_method_1 = internal_algorithm(
+            model_1, get_target_layer(model_1, target_layer)
+        )
+        # cuda_model is used to obtain target_layer since DataParallel
+        # adds additional wrapper.
+        # model_2 is always either the CUDA model itself or DataParallel
+        if alt_device_ids is None:
+            attr_method_2 = internal_algorithm(
+                model_2, get_target_layer(cuda_model, target_layer)
+            )
+        else:
+            # LayerDeepLift and LayerDeepLiftShap do not take device ids
+            # as a parameter, since they must always have the DataParallel
+            # model object directly.
+            # Some neuron methods and GuidedGradCAM also require the
+            # model and cannot take a forward function.
+            if issubclass(
+                internal_algorithm,
+                (
+                    LayerDeepLift,
+                    LayerDeepLiftShap,
+                    LayerLRP,
+                    NeuronDeepLift,
+                    NeuronDeepLiftShap,
+                    NeuronDeconvolution,
+                    NeuronGuidedBackprop,
+                    GuidedGradCam,
+                ),
+            ):
+                attr_method_2 = internal_algorithm(
+                    model_2,
+                    get_target_layer(cuda_model, target_layer),  # type: ignore
+                )
+            else:
+                attr_method_2 = internal_algorithm(
+                    model_2.forward,
+                    get_target_layer(cuda_model, target_layer),
+                    device_ids=alt_device_ids,
+                )
+    else:
+        attr_method_1 = algorithm(model_1)
+        attr_method_2 = algorithm(model_2)
+    if noise_tunnel:
+        attr_method_1 = NoiseTunnel(attr_method_1)
+        attr_method_2 = NoiseTunnel(attr_method_2)
+    return attr_method_1, attr_method_2
 
 
 if torch.cuda.is_available() and torch.cuda.device_count() != 0:

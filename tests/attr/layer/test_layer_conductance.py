@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 import unittest
 from typing import Any, cast, Dict, List, Optional, Tuple, Union
 
 import torch
 from captum._utils.typing import BaselineType
 from captum.attr._core.layer.layer_conductance import LayerConductance
-from packaging import version
-from tests.attr.helpers.conductance_reference import ConductanceReference
-from tests.helpers.basic import (
+from captum.testing.attr.helpers.conductance_reference import ConductanceReference
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
     BasicModel_ConvNet,
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_MultiInput,
 )
+from packaging import version
 from torch import Tensor
 from torch.nn import Module
 
@@ -164,7 +171,7 @@ class Test(BaseTest):
         cond = LayerConductance(model, target_layer)
         self.assertTrue(cond.multiplies_by_inputs)
         for internal_batch_size in (None, 4, 20):
-            attributions, delta = cond.attribute(
+            attributions, delta = cond.attribute(  # type: ignore[has-type]
                 test_input,
                 baselines=baselines,
                 target=0,
@@ -209,7 +216,7 @@ class Test(BaseTest):
         cond_ref = ConductanceReference(model, target_layer)
         attributions, delta = cast(
             Tuple[Tensor, Tensor],
-            cond.attribute(
+            cond.attribute(  # type: ignore[has-type]
                 test_input,
                 baselines=test_baseline,
                 target=target_index,
@@ -249,7 +256,7 @@ class Test(BaseTest):
             for i in range(test_input.shape[0]):
                 single_attributions = cast(
                     Tensor,
-                    cond.attribute(
+                    cond.attribute(  # type: ignore[has-type]
                         test_input[i : i + 1],
                         baselines=(
                             test_baseline[i : i + 1]

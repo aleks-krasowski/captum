@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import math
 from enum import Enum
 from typing import Any, Callable, cast, Dict, Generator, List, Optional, Tuple, Union
@@ -19,8 +26,12 @@ def drange(
     min_val: Union[int, float], max_val: Union[int, float], step_val: Union[int, float]
 ) -> Generator[Union[int, float], None, None]:
     curr = min_val
+    # pyre-fixme[58]: `>` is not supported for operand types `Union[float, int]` and
+    #  `int`.
     while curr < max_val:
         yield curr
+        # pyre-fixme[58]: `+` is not supported for operand types `Union[float, int]`
+        #  and `Union[float, int]`.
         curr += step_val
 
 
@@ -41,7 +52,9 @@ class MinParamPerturbationMode(Enum):
 class MinParamPerturbation:
     def __init__(
         self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         forward_func: Callable,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         attack: Union[Callable, Perturbation],
         arg_name: str,
         arg_min: Union[int, float],
@@ -49,8 +62,10 @@ class MinParamPerturbation:
         arg_step: Union[int, float],
         mode: str = "linear",
         num_attempts: int = 1,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         preproc_fn: Optional[Callable] = None,
         apply_before_preproc: bool = False,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         correct_fn: Optional[Callable] = None,
     ) -> None:
         r"""
@@ -132,14 +147,20 @@ class MinParamPerturbation:
         self.arg_max = arg_max
         self.arg_step = arg_step
         assert self.arg_max > (
-            self.arg_min + self.arg_step
+            self.arg_min
+            # pyre-fixme[6]: For 1st argument expected `int` but got `Union[float,
+            #  int]`.
+            + self.arg_step
         ), "Step size cannot be smaller than range between min and max"
 
         self.num_attempts = num_attempts
         self.preproc_fn = preproc_fn
         self.apply_before_preproc = apply_before_preproc
+        # pyre-fixme[4]: Attribute must be annotated.
         self.correct_fn = cast(
-            Callable, correct_fn if correct_fn is not None else default_correct_fn
+            # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+            Callable,
+            correct_fn if correct_fn is not None else default_correct_fn,
         )
 
         assert (
@@ -149,8 +170,10 @@ class MinParamPerturbation:
 
     def _evaluate_batch(
         self,
+        # pyre-fixme[24]: Generic type `list` expects 1 type parameter, use
+        #  `typing.List[<element type>]` to avoid runtime subscripting errors.
         input_list: List,
-        additional_forward_args: Any,
+        additional_forward_args: Optional[Tuple[object, ...]],
         correct_fn_kwargs: Optional[Dict[str, Any]],
         target: TargetType,
     ) -> Optional[int]:
@@ -213,7 +236,7 @@ class MinParamPerturbation:
         inputs: Any,
         preproc_input: Any,
         attack_kwargs: Optional[Dict[str, Any]],
-        additional_forward_args: Any,
+        additional_forward_args: Optional[Tuple[object, ...]],
         expanded_additional_args: Any,
         correct_fn_kwargs: Optional[Dict[str, Any]],
         target: TargetType,
@@ -270,7 +293,7 @@ class MinParamPerturbation:
         inputs: Any,
         preproc_input: Any,
         attack_kwargs: Optional[Dict[str, Any]],
-        additional_forward_args: Any,
+        additional_forward_args: Optional[Tuple[object, ...]],
         expanded_additional_args: Any,
         correct_fn_kwargs: Optional[Dict[str, Any]],
         target: TargetType,
@@ -280,11 +303,23 @@ class MinParamPerturbation:
         max_range = self.arg_max
         min_so_far = None
         min_input = None
+        # pyre-fixme[58]: `<` is not supported for operand types `Union[float, int]`
+        #  and `int`.
         while max_range > min_range:
+            # pyre-fixme[6]: For 1st argument expected `int` but got `Union[float,
+            #  int]`.
+            # pyre-fixme[58]: `//` is not supported for operand types `int` and
+            #  `Union[float, int]`.
             mid_step = ((max_range - min_range) // self.arg_step) // 2
 
+            # pyre-fixme[6]: For 1st argument expected `int` but got `Union[float,
+            #  int]`.
+            # pyre-fixme[58]: `<` is not supported for operand types `int` and
+            #  `Union[float, int]`.
             if mid_step == 0 and min_range + self.arg_step < max_range:
                 mid_step = 1
+            # pyre-fixme[58]: `*` is not supported for operand types `int` and
+            #  `Union[float, int]`.
             mid = min_range + (mid_step * self.arg_step)
 
             input_list = []
@@ -336,10 +371,11 @@ class MinParamPerturbation:
 
         return min_input, min_so_far
 
-    @log_usage()
+    @log_usage(part_of_slo=False)
     def evaluate(
         self,
         inputs: Any,
+        # pyre-fixme[24]: Generic type `tuple` expects at least 1 type parameter.
         additional_forward_args: Optional[Tuple] = None,
         target: TargetType = None,
         perturbations_per_eval: int = 1,

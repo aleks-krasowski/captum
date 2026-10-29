@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 from typing import Callable
 
 
@@ -8,6 +15,8 @@ class Perturbation:
     its child classes to extend and override core `perturb` method.
     """
 
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    # pyre-fixme[13]: Attribute `perturb` is never initialized.
     perturb: Callable
     r"""
     This method computes and returns the perturbed input for each input tensor.
@@ -35,5 +44,7 @@ class Perturbation:
                     corresponding sized tensors is returned.
     """
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def __call__(self, *args, **kwargs):
         return self.perturb(*args, **kwargs)

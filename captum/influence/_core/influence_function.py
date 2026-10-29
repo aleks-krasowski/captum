@@ -1,4 +1,9 @@
-# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 
 import functools
 from abc import abstractmethod
@@ -7,10 +12,8 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-
 from captum._utils.gradient import _extract_parameters_from_layers
 from captum.influence._core.influence import DataInfluence
-
 from captum.influence._utils.common import (
     _check_loss_fn,
     _compute_batch_loss_influence_function_base,
@@ -33,7 +36,7 @@ from captum.influence._utils.common import (
     KMostInfluentialResults,
 )
 from captum.log import log_usage
-from torch import Tensor
+from torch import device, Tensor
 from torch.nn import Module
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -67,11 +70,15 @@ class InfluenceFunctionBase(DataInfluence):
         model: Module,
         train_dataset: Union[Dataset, DataLoader],
         checkpoint: str,
-        checkpoints_load_func: Callable = _load_flexible_state_dict,
+        checkpoints_load_func: Callable[
+            [Module, str], float
+        ] = _load_flexible_state_dict,
         layers: Optional[List[str]] = None,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         batch_size: Union[int, None] = 1,
         hessian_dataset: Optional[Union[Dataset, DataLoader]] = None,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         test_loss_fn: Optional[Union[Module, Callable]] = None,
         sample_wise_grads_per_batch: bool = False,
     ) -> None:
@@ -174,7 +181,7 @@ class InfluenceFunctionBase(DataInfluence):
                     inefficient. We offer an implementation of batch-wise gradient
                     computations w.r.t. to model parameters which is computationally
                     more efficient. This implementation can be enabled by setting the
-                    `sample_wise_grad_per_batch` argument to `True`, and should be
+                    `sample_wise_grads_per_batch` argument to `True`, and should be
                     enabled if and only if the `loss_fn` argument is a "reduction" loss
                     function. For example, `nn.BCELoss(reduction="sum")` would be a
                     valid `loss_fn` if this implementation is enabled (see
@@ -196,6 +203,7 @@ class InfluenceFunctionBase(DataInfluence):
         checkpoints_load_func(model, checkpoint)
         self.loss_fn = loss_fn
         # If test_loss_fn not provided, it's assumed to be same as loss_fn
+        # pyre-fixme[4]: Attribute must be annotated.
         self.test_loss_fn = loss_fn if test_loss_fn is None else test_loss_fn
         self.sample_wise_grads_per_batch = sample_wise_grads_per_batch
         self.batch_size = batch_size
@@ -205,11 +213,13 @@ class InfluenceFunctionBase(DataInfluence):
                 "since the `train_dataset` argument was a `Dataset`, "
                 "`batch_size` must be an int."
             )
+            # pyre-fixme[4]: Attribute must be annotated.
             self.train_dataloader = DataLoader(train_dataset, batch_size, shuffle=False)
         else:
             self.train_dataloader = train_dataset
 
         if hessian_dataset is None:
+            # pyre-fixme[4]: Attribute must be annotated.
             self.hessian_dataloader = self.train_dataloader
         elif not isinstance(hessian_dataset, DataLoader):
             assert isinstance(batch_size, int), (
@@ -235,10 +245,11 @@ class InfluenceFunctionBase(DataInfluence):
         # `loss_fn` is needed to compute the Hessian.
 
         # check `loss_fn`
-        self.reduction_type = _check_loss_fn(
+        self.reduction_type: str = _check_loss_fn(
             self, loss_fn, "loss_fn", sample_wise_grads_per_batch
         )
         # check `test_loss_fn` if it was provided
+        self.test_reduction_type: str = ""
         if not (test_loss_fn is None):
             self.test_reduction_type = _check_loss_fn(
                 self, test_loss_fn, "test_loss_fn", sample_wise_grads_per_batch
@@ -246,7 +257,7 @@ class InfluenceFunctionBase(DataInfluence):
         else:
             self.test_reduction_type = self.reduction_type
 
-        self.layer_modules = None
+        self.layer_modules: Optional[List[Module]] = None
         if not (layers is None):
             self.layer_modules = _set_active_parameters(model, layers)
 
@@ -381,6 +392,7 @@ class InfluenceFunctionBase(DataInfluence):
     @abstractmethod
     def influence(  # type: ignore[override]
         self,
+        # pyre-fixme[24]: Generic type `tuple` expects at least 1 type parameter.
         inputs: Tuple,
         k: Optional[int] = None,
         proponents: bool = True,
@@ -469,6 +481,7 @@ class IntermediateQuantitiesInfluenceFunction(InfluenceFunctionBase):
     """
 
     @abstractmethod
+    # pyre-fixme[3]: Return type must be annotated.
     def compute_intermediate_quantities(
         self,
         inputs_dataset: Union[Tuple[Any, ...], DataLoader],
@@ -480,10 +493,13 @@ class IntermediateQuantitiesInfluenceFunction(InfluenceFunctionBase):
         pass
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def _flatten_forward_factory(
     model: nn.Module,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]],
     reduction_type: str,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     unflatten_fn: Callable,
     param_names: List[str],
 ):
@@ -503,10 +519,15 @@ def _flatten_forward_factory(
     """
 
     # this is the factory that accepts a batch
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def flatten_forward_factory_given_batch(batch):
 
         # this is the function that factory returns, which is a function of flattened
         # parameters
+        # pyre-fixme[53]: Captured variable `batch` is not annotated.
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def flattened_forward(flattened_params):
             # as everywhere else, the all but the last elements of a batch are
             # assumed to correspond to the features, i.e. input to forward function
@@ -527,14 +548,18 @@ def _flatten_forward_factory(
     return flatten_forward_factory_given_batch
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def _compute_dataset_func(
     inputs_dataset: Union[Tuple[Tensor, ...], DataLoader],
     model: Module,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]],
     reduction_type: str,
     layer_modules: Optional[List[Module]],
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     f: Callable,
     show_progress: bool,
+    # pyre-fixme[2]: Parameter must be annotated.
     **f_kwargs,
 ):
     """
@@ -563,6 +588,7 @@ def _compute_dataset_func(
     # names of each param in `params`.
     # Both are needed for calling `_flatten_forward_factory`
     _unflatten_params = _unflatten_params_factory(
+        # pyrefly: ignore [bad-argument-type]
         tuple([param.shape for param in params])
     )
     param_names = _params_to_names(params, model)
@@ -581,18 +607,25 @@ def _compute_dataset_func(
     flattened_params = _flatten_params(params)
 
     # define function of a single batch
+    # pyre-fixme[53]: Captured variable `factory_given_batch` is not annotated.
+    # pyre-fixme[53]: Captured variable `flattened_params` is not annotated.
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def batch_f(batch):
         flattened_forward = factory_given_batch(batch)  # accepts flattened params
         return f(flattened_forward, flattened_params, **f_kwargs)
 
     # sum up results of `batch_f`
     if show_progress:
+        # pyre-fixme[9]: inputs_dataset has type `Union[DataLoader[typing.Any],
+        #  typing.Tuple[Tensor, ...]]`; used as `tqdm[Tensor]`.
         inputs_dataset = tqdm(inputs_dataset, desc="processing `hessian_dataset` batch")
 
     return _dataset_fn(inputs_dataset, batch_f, add)
 
 
 def _get_dataset_embeddings_intermediate_quantities_influence_function(
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     batch_embeddings_fn: Callable,
     inputs_dataset: DataLoader,
     aggregate: bool,
@@ -667,11 +700,15 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         model: Module,
         train_dataset: Union[Dataset, DataLoader],
         checkpoint: str,
-        checkpoints_load_func: Callable = _load_flexible_state_dict,
+        checkpoints_load_func: Callable[
+            [Module, str], float
+        ] = _load_flexible_state_dict,
         layers: Optional[List[str]] = None,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         batch_size: Union[int, None] = 1,
         hessian_dataset: Optional[Union[Dataset, DataLoader]] = None,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         test_loss_fn: Optional[Union[Module, Callable]] = None,
         sample_wise_grads_per_batch: bool = False,
         projection_dim: int = 50,
@@ -767,7 +804,7 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
                     inefficient. We offer an implementation of batch-wise gradient
                     computations w.r.t. to model parameters which is computationally
                     more efficient. This implementation can be enabled by setting the
-                    `sample_wise_grad_per_batch` argument to `True`, and should be
+                    `sample_wise_grads_per_batch` argument to `True`, and should be
                     enabled if and only if the `loss_fn` argument is a "reduction" loss
                     function. For example, `nn.BCELoss(reduction="sum")` would be a
                     valid `loss_fn` if this implementation is enabled (see
@@ -830,9 +867,9 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
 
         # infer the device the model is on.  all parameters are assumed to be on the
         # same device
-        self.model_device = next(model.parameters()).device
+        self.model_device: device = next(model.parameters()).device
 
-        self.R = self._retrieve_projections_naive_influence_function(
+        self.R: Tensor = self._retrieve_projections_naive_influence_function(
             self.hessian_dataloader,
             projection_on_cpu,
             show_progress,
@@ -914,11 +951,13 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         # see https://en.wikipedia.org/wiki/Eigendecomposition_of_a_matrix#Matrix_inverse_via_eigendecomposition # noqa: E501
         # for details, which mentions that discarding small eigenvalues (as done in
         # `_top_eigen`) reduces noisiness of the inverse.
+        # pyre-fixme[58]: `/` is not supported for operand types `float` and `Tensor`.
         ls = (1.0 / ls) ** 0.5
         return (ls.unsqueeze(0) * vs).to(
             device=torch.device("cpu") if projection_on_cpu else self.model_device
         )
 
+    # pyrefly: ignore [bad-override]
     def compute_intermediate_quantities(
         self,
         inputs_dataset: Union[Tuple[Any, ...], DataLoader],
@@ -989,14 +1028,15 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         inputs_dataset = _format_inputs_dataset(inputs_dataset)
 
         if show_progress:
+            # pyrefly: ignore [bad-assignment]
             inputs_dataset = _progress_bar_constructor(
                 self, inputs_dataset, "inputs_dataset", "intermediate quantities"
             )
+
         # infer model / data device through model
-        if return_on_cpu is None or (not return_on_cpu):
-            return_device = self.model_device
-        else:
-            return_device = torch.device("cpu")
+        return_device: device = (
+            torch.device("cpu") if return_on_cpu else self.model_device
+        )
 
         # as described in the description for `NaiveInfluenceFunction`, the embedding
         # for an example `x` is :math`\nabla_\theta L(x)' R`.
@@ -1008,10 +1048,11 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
 
         # choose the correct loss function and reduction type based on `test`
         loss_fn = self.test_loss_fn if test else self.loss_fn
-        reduction_type = self.test_reduction_type if test else self.reduction_type
+        reduction_type: str = self.test_reduction_type if test else self.reduction_type
 
         # define a helper function that returns the embeddings for a batch
-        def get_batch_embeddings(batch):
+        # pyre-fixme[53]: Captured variable `loss_fn` is not annotated.
+        def get_batch_embeddings(batch: Tuple[Tensor, ...]) -> Tensor:
             # if `self.R` is on cpu, and `self.model_device` was not cpu, this implies
             # `self.R` was too large to fit in gpu memory, and we should do the matrix
             # multiplication of the batch jacobians with `self.R` separately for each
@@ -1037,13 +1078,15 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
         # sum, depending on `aggregate`
         return _get_dataset_embeddings_intermediate_quantities_influence_function(
             get_batch_embeddings,
+            # pyrefly: ignore [bad-argument-type]
             inputs_dataset,
             aggregate,
         )
 
-    @log_usage(skip_self_logging=True)
+    @log_usage(part_of_slo=True, skip_self_logging=True)
     def influence(  # type: ignore[override]
         self,
+        # pyre-fixme[24]: Generic type `tuple` expects at least 1 type parameter.
         inputs: Tuple,
         k: Optional[int] = None,
         proponents: bool = True,
@@ -1239,7 +1282,7 @@ class NaiveInfluenceFunction(IntermediateQuantitiesInfluenceFunction):
             self, inputs_dataset, show_progress
         )
 
-    @log_usage(skip_self_logging=True)
+    @log_usage(part_of_slo=True, skip_self_logging=True)
     def self_influence(
         self,
         inputs_dataset: Optional[Union[Tuple[Any, ...], DataLoader]] = None,
@@ -1289,6 +1332,7 @@ def _basic_computation_naive_influence_function(
     influence_inst: InfluenceFunctionBase,
     inputs: Tuple[Any, ...],
     targets: Optional[Tensor] = None,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]] = None,
     reduction_type: Optional[str] = None,
     test: bool = False,

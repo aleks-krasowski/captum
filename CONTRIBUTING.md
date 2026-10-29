@@ -50,21 +50,22 @@ Github Actions will fail on your PR if it does not adhere to the ufmt or flake8 
 
 #### Type Hints
 
-Captum is fully typed using python 3.6+
+Captum is fully typed using Python 3.10+
 [type hints](https://www.python.org/dev/peps/pep-0484/).
 We expect any contributions to also use proper type annotations, and we enforce
 consistency of these in our continuous integration tests.
 
-To type check your code locally, install [mypy](https://github.com/python/mypy),
-which can be done with pip using `pip install "mypy>=0.760"`
-Then run this script from the repository root:
+We use [Pyrefly](https://pyrefly.org/) for type checking. It is installed as part of the dev
+dependencies (`pip install -e ".[dev]"`), or on its own with `pip install pyrefly`. To run Pyrefly,
+use the following command from inside the repository root, which matches what continuous
+integration runs:
 ```bash
-./scripts/run_mypy.sh
+pyrefly check captum \
+  --project-excludes='**/fb/**' \
+  --python-version=3.10 \
+  --permissive-ignores \
+  --untyped-def-behavior=check-and-infer-return-any
 ```
-Note that we expect mypy to have version 0.760 or higher, and when type checking, use PyTorch 1.4 or
-higher due to fixes to PyTorch type hints available in 1.4. We also use the Literal feature which is
-available only in Python 3.8 or above. If type-checking using a previous version of Python, you will
-need to install the typing-extension package which can be done with pip using `pip install typing-extensions`.
 
 #### Unit Tests
 

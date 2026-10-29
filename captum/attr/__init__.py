@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+# pyre-strict
 from captum.attr._core.dataloader_attr import DataLoaderAttribution
 from captum.attr._core.deep_lift import DeepLift, DeepLiftShap
 from captum.attr._core.feature_ablation import FeatureAblation
@@ -8,7 +10,11 @@ from captum.attr._core.guided_backprop_deconvnet import Deconvolution, GuidedBac
 from captum.attr._core.guided_grad_cam import GuidedGradCam
 from captum.attr._core.input_x_gradient import InputXGradient
 from captum.attr._core.integrated_gradients import IntegratedGradients
-from captum.attr._core.kernel_shap import KernelShap
+from captum.attr._core.kernel_shap import (
+    BaselineKernelShap,
+    KernelShap,
+    RandomBaselineKernelShap,
+)
 from captum.attr._core.layer.grad_cam import LayerGradCam
 from captum.attr._core.layer.internal_influence import InternalInfluence
 from captum.attr._core.layer.layer_activation import LayerActivation
@@ -25,6 +31,7 @@ from captum.attr._core.llm_attr import (
     LLMAttribution,
     LLMAttributionResult,
     LLMGradientAttribution,
+    RemoteLLMAttribution,
 )
 from captum.attr._core.lrp import LRP
 from captum.attr._core.neuron.neuron_conductance import NeuronConductance
@@ -41,6 +48,7 @@ from captum.attr._core.neuron.neuron_integrated_gradients import (
 )
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._core.occlusion import Occlusion
+from captum.attr._core.remote_provider import RemoteLLMProvider, VLLMProvider
 from captum.attr._core.saliency import Saliency
 from captum.attr._core.shapley_value import ShapleyValues, ShapleyValueSampling
 from captum.attr._models.base import (
@@ -60,7 +68,9 @@ from captum.attr._utils.attribution import (
 from captum.attr._utils.baselines import ProductBaselines
 from captum.attr._utils.class_summarizer import ClassSummarizer
 from captum.attr._utils.interpretable_input import (
+    ImageMaskInput,
     InterpretableInput,
+    TextSegmentInput,
     TextTemplateInput,
     TextTokenInput,
 )
@@ -71,6 +81,7 @@ from captum.attr._utils.stat import (
     Mean,
     Min,
     MSE,
+    StatValue,
     StdDev,
     Sum,
     Var,
@@ -100,7 +111,9 @@ __all__ = [
     "LimeBase",
     "Lime",
     "LRP",
+    "BaselineKernelShap",
     "KernelShap",
+    "RandomBaselineKernelShap",
     "LayerConductance",
     "LayerGradientXActivation",
     "LayerActivation",
@@ -109,6 +122,9 @@ __all__ = [
     "LLMAttribution",
     "LLMAttributionResult",
     "LLMGradientAttribution",
+    "RemoteLLMAttribution",
+    "RemoteLLMProvider",
+    "VLLMProvider",
     "InternalInfluence",
     "InterpretableInput",
     "LayerGradCam",
@@ -129,7 +145,9 @@ __all__ = [
     "NoiseTunnel",
     "ProductBaselines",
     "GradientShap",
+    "ImageMaskInput",
     "InterpretableEmbeddingBase",
+    "TextSegmentInput",
     "TextTemplateInput",
     "TextTokenInput",
     "TokenReferenceBase",
@@ -147,5 +165,6 @@ __all__ = [
     "Max",
     "Sum",
     "Count",
+    "StatValue",
     "SummarizerSingleTensor",
 ]

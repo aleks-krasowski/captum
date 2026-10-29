@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import io
 import unittest
 import unittest.mock
@@ -7,18 +14,24 @@ from typing import Any, Callable, List, Tuple, Union
 
 import torch
 from captum._utils.typing import BaselineType, TensorOrTupleOfTensorsGeneric
-from captum.attr._core.kernel_shap import KernelShap
-from tests.helpers.basic import (
+from captum.attr._core.kernel_shap import (
+    BaselineKernelShap,
+    KernelShap,
+    RandomBaselineKernelShap,
+)
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
     set_all_random_seeds,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
     BasicLinearModel,
+    BasicLinearModel2,
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_MultiInput,
 )
+from torch import Tensor
 
 
 class Test(BaseTest):
@@ -47,6 +60,152 @@ class Test(BaseTest):
             expected_coefs=[[40.0, 120.0, 80.0]],
         )
 
+    def test_baseline_kernel_shap_alias(self) -> None:
+        self.assertIs(BaselineKernelShap, KernelShap)
+
+    def test_random_baseline_kernel_shap_linear(self) -> None:
+        weight = torch.tensor([[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]])
+        net = BasicLinearModel2(3, 2)
+        net.linear.weight = torch.nn.Parameter(weight)
+        inp = torch.tensor([[10.0, 20.0, 30.0]])
+        baselines = torch.tensor([[0.0, 0.0, 0.0], [2.0, 4.0, 6.0]])
+
+        rbks = RandomBaselineKernelShap(net)
+        attributions = rbks.attribute(
+            inp,
+            baselines,
+            target=0,
+            n_samples=500,
+            perturbations_per_eval=2,
+        )
+
+        assertTensorAlmostEqual(
+            self,
+            attributions,
+            [[9.0, 36.0, 81.0]],
+            delta=0.1,
+            mode="max",
+        )
+
+        attributions = rbks.attribute(
+            inp,
+            baselines,
+            target=0,
+            n_samples=500,
+            perturbations_per_eval=2,
+            return_input_shape=False,
+        )
+
+        assertTensorAlmostEqual(
+            self,
+            attributions,
+            [[9.0, 36.0, 81.0]],
+            delta=0.1,
+            mode="max",
+        )
+
+    def test_random_baseline_kernel_shap_matches_single_baseline(self) -> None:
+        net = BasicModel_MultiLayer()
+        inp = torch.tensor([[20.0, 50.0, 30.0]])
+        baseline = torch.tensor([[10.0, 20.0, 10.0]])
+
+        set_all_random_seeds(1234)
+        kernel_shap_attr = KernelShap(net).attribute(
+            inp,
+            baseline,
+            target=0,
+            n_samples=200,
+            perturbations_per_eval=2,
+        )
+
+        set_all_random_seeds(1234)
+        random_baseline_attr = RandomBaselineKernelShap(net).attribute(
+            inp,
+            baseline,
+            target=0,
+            n_samples=200,
+            perturbations_per_eval=2,
+        )
+
+        assertTensorAlmostEqual(
+            self,
+            random_baseline_attr,
+            kernel_shap_attr,
+            delta=0.01,
+            mode="max",
+        )
+
+        set_all_random_seeds(1234)
+        sampled_baseline_attr = RandomBaselineKernelShap(net).attribute(
+            inp,
+            torch.cat((baseline, baseline), dim=0),
+            target=0,
+            n_samples=200,
+            perturbations_per_eval=2,
+            n_baseline_samples=1,
+        )
+
+        assertTensorAlmostEqual(
+            self,
+            sampled_baseline_attr,
+            kernel_shap_attr,
+            delta=0.01,
+            mode="max",
+        )
+
+    def test_random_baseline_kernel_shap_batch_uses_distribution(
+        self,
+    ) -> None:
+        weight = torch.tensor([[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]])
+        net = BasicLinearModel2(3, 2)
+        net.linear.weight = torch.nn.Parameter(weight)
+        inp = torch.tensor([[10.0, 20.0, 30.0], [4.0, 6.0, 8.0]])
+        baselines = torch.tensor([[0.0, 0.0, 0.0], [2.0, 4.0, 6.0]])
+
+        rbks = RandomBaselineKernelShap(net)
+        attributions = rbks.attribute(
+            inp,
+            baselines,
+            target=0,
+            n_samples=500,
+            perturbations_per_eval=2,
+        )
+
+        assertTensorAlmostEqual(
+            self,
+            attributions,
+            [[9.0, 36.0, 81.0], [3.0, 8.0, 15.0]],
+            delta=0.1,
+            mode="max",
+        )
+
+    def test_random_baseline_kernel_shap_multi_input(self) -> None:
+        def model(input1: Tensor, input2: Tensor) -> Tensor:
+            return input1[:, 0] + 2.0 * input1[:, 1] + 3.0 * input2[:, 0]
+
+        inp1 = torch.tensor([[10.0, 20.0]])
+        inp2 = torch.tensor([[30.0]])
+        baselines = (
+            torch.tensor([[0.0, 0.0], [2.0, 4.0]]),
+            torch.tensor([[0.0], [6.0]]),
+        )
+
+        rbks = RandomBaselineKernelShap(model)
+        attributions = rbks.attribute(
+            (inp1, inp2),
+            baselines,
+            n_samples=500,
+            perturbations_per_eval=2,
+        )
+
+        assertTensorTuplesAlmostEqual(
+            self,
+            attributions,
+            ([[9.0, 36.0]], [[81.0]]),
+            delta=0.1,
+            mode="max",
+        )
+
     def test_simple_kernel_shap(self) -> None:
         net = BasicModel_MultiLayer()
         inp = torch.tensor([[20.0, 50.0, 30.0]], requires_grad=True)
@@ -71,7 +230,9 @@ class Test(BaseTest):
         )
 
     @unittest.mock.patch("sys.stderr", new_callable=io.StringIO)
-    def test_simple_kernel_shap_with_show_progress(self, mock_stderr) -> None:
+    def test_simple_kernel_shap_with_show_progress(
+        self, mock_stderr: io.StringIO
+    ) -> None:
         net = BasicModel_MultiLayer()
         inp = torch.tensor([[20.0, 50.0, 30.0]], requires_grad=True)
 
@@ -138,9 +299,9 @@ class Test(BaseTest):
         inp2 = torch.tensor([[20.0, 0.0, 50.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0]])
         expected = (
-            [[90, 0, 0]],
-            [[78, 0, 198]],
-            [[0, 398, 38]],
+            [[90.0, 0.0, 0.0]],
+            [[78.0, 0.0, 198.0]],
+            [[0.0, 398.0, 38.0]],
         )
         self._kernel_shap_test_assert(
             net,
@@ -171,9 +332,9 @@ class Test(BaseTest):
             feature_mask=(mask1, mask2, mask3),
         )
         expected_with_baseline = (
-            [[184, 580.0, 184]],
-            [[184, 580.0, -12.0]],
-            [[184, 184, 184]],
+            [[184.0, 580.0, 184.0]],
+            [[184.0, 580.0, -12.0]],
+            [[184.0, 184.0, 184.0]],
         )
         self._kernel_shap_test_assert(
             net,
@@ -192,7 +353,7 @@ class Test(BaseTest):
         mask1 = torch.tensor([[0, 1, 2, 3, 4, 5, 6]])
         mask2 = torch.tensor([[]], dtype=torch.long)  # empty mask
         expected: Tuple[List[List[float]], ...] = (
-            [[-8.0, 0, 0, -2.0, 0, 0, -8.0]],
+            [[-8.0, 0.0, 0.0, -2.0, 0.0, 0.0, -8.0]],
             [[]],
         )
         # no mask
@@ -201,7 +362,7 @@ class Test(BaseTest):
             (inp1, inp2),
             expected,
             n_samples=2000,
-            expected_coefs=[[-8.0, 0, 0, -2.0, 0, 0, -8.0]],
+            expected_coefs=[[-8.0, 0.0, 0.0, -2.0, 0.0, 0.0, -8.0]],
         )
         # with mask
         self._kernel_shap_test_assert(
@@ -209,7 +370,7 @@ class Test(BaseTest):
             (inp1, inp2),
             expected,
             n_samples=2000,
-            expected_coefs=[[-8.0, 0, 0, -2.0, 0, 0, -8.0]],
+            expected_coefs=[[-8.0, 0.0, 0.0, -2.0, 0.0, 0.0, -8.0]],
             feature_mask=(mask1, mask2),
         )
 
@@ -219,9 +380,9 @@ class Test(BaseTest):
         inp2 = torch.tensor([[20.0, 0.0, 50.0], [0.0, 100.0, 0.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0], [0.0, 10.0, 0.0]])
         expected = (
-            [[90, 0, 0], [78.0, 198.0, 118.0]],
-            [[78, 0, 198], [0.0, 398.0, 0.0]],
-            [[0, 398, 38], [0.0, 38.0, 0.0]],
+            [[90.0, 0.0, 0.0], [78.0, 198.0, 118.0]],
+            [[78.0, 0.0, 198.0], [0.0, 398.0, 0.0]],
+            [[0.0, 398.0, 38.0], [0.0, 38.0, 0.0]],
         )
         self._kernel_shap_test_assert(
             net,
@@ -230,7 +391,7 @@ class Test(BaseTest):
             additional_input=(1,),
             n_samples=2500,
             expected_coefs=[
-                [90.0, 0, 0, 78, 0, 198, 0, 398, 38],
+                [90.0, 0.0, 0.0, 78.0, 0.0, 198.0, 0.0, 398.0, 38.0],
                 [78.0, 198.0, 118.0, 0.0, 398.0, 0.0, 0.0, 38.0, 0.0],
             ],
         )
@@ -257,9 +418,9 @@ class Test(BaseTest):
             n_samples=300,
         )
         expected_with_baseline = (
-            [[1040, 1040, 1040], [184, 580.0, 184]],
-            [[52, 1040, 132], [184, 580.0, -12.0]],
-            [[52, 1040, 132], [184, 184, 184]],
+            [[1040.0, 1040.0, 1040.0], [184.0, 580.0, 184.0]],
+            [[52.0, 1040.0, 132.0], [184.0, 580.0, -12.0]],
+            [[52.0, 1040.0, 132.0], [184.0, 184.0, 184.0]],
         )
         self._kernel_shap_test_assert(
             net,
@@ -295,7 +456,9 @@ class Test(BaseTest):
             lambda inp: int(torch.sum(net(inp)).item())
         )
 
-    def _single_input_scalar_kernel_shap_assert(self, func: Callable) -> None:
+    def _single_input_scalar_kernel_shap_assert(
+        self, func: Callable[..., Union[Tensor, float, int]]
+    ) -> None:
         inp = torch.tensor([[2.0, 10.0, 3.0]], requires_grad=True)
         mask = torch.tensor([[0, 0, 1]])
 
@@ -330,7 +493,17 @@ class Test(BaseTest):
             lambda *inp: torch.sum(net(*inp)).item()
         )
 
-    def _multi_input_scalar_kernel_shap_assert(self, func: Callable) -> None:
+    def test_futures_not_implemented(self) -> None:
+        net = BasicModel_MultiLayer_MultiInput()
+        kernel_shap = KernelShap(net)
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = kernel_shap.attribute_future()  # type: ignore
+        self.assertEqual(attributions, None)
+
+    def _multi_input_scalar_kernel_shap_assert(
+        self, func: Callable[..., Union[Tensor, float, int]]
+    ) -> None:
         inp1 = torch.tensor([[23.0, 100.0, 0.0], [20.0, 50.0, 30.0]])
         inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0], [20.0, 10.0, 13.0]])
@@ -338,9 +511,9 @@ class Test(BaseTest):
         mask2 = torch.tensor([[0, 1, 2]])
         mask3 = torch.tensor([[0, 1, 2]])
         expected = (
-            [[3850.6666, 3850.6666, 3850.6666]] * 2,
-            [[306.6666, 3850.6666, 410.6666]] * 2,
-            [[306.6666, 3850.6666, 410.6666]] * 2,
+            [[3850.6666, 3850.6666, 3850.6666]],
+            [[306.6666, 3850.6666, 410.6666]],
+            [[306.6666, 3850.6666, 410.6666]],
         )
 
         self._kernel_shap_test_assert(
@@ -356,9 +529,11 @@ class Test(BaseTest):
 
     def _kernel_shap_test_assert(
         self,
-        model: Callable,
+        model: Callable[..., Union[int, float, Tensor]],
         test_input: TensorOrTupleOfTensorsGeneric,
-        expected_attr,
+        expected_attr: Union[
+            List[List[float]], Tuple[List[List[float]], ...], List[List[List[float]]]
+        ],
         feature_mask: Union[None, TensorOrTupleOfTensorsGeneric] = None,
         additional_input: Any = None,
         perturbations_per_eval: Tuple[int, ...] = (1,),

@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
 
 import torch
 from captum._utils.typing import BaselineType, Tensor
 from captum.attr._core.integrated_gradients import IntegratedGradients
 from captum.attr._core.noise_tunnel import NoiseTunnel
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.classification_models import SigmoidModel, SoftmaxModel
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.classification_models import SigmoidModel, SoftmaxModel
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_sigmoid_classification_vanilla(self) -> None:
         self._assert_sigmoid_classification("vanilla", "riemann_right")
@@ -94,7 +102,7 @@ class Test(BaseTest):
         ig = IntegratedGradients(model.forward)
         model.zero_grad()
         if type == "vanilla":
-            attributions, delta = ig.attribute(
+            attributions, delta = ig.attribute(  # type: ignore[has-type]
                 input,
                 baselines=baseline,
                 target=target,

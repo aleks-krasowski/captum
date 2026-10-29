@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
-
 from captum._utils.typing import TargetType, TensorOrTupleOfTensorsGeneric
 from captum.attr._core.gradient_shap import GradientShap
 from captum.attr._core.layer.layer_gradient_shap import (
     LayerGradientShap,
     LayerInputBaselineXGradient,
 )
-from packaging import version
-from tests.attr.helpers.attribution_delta_util import assert_attribution_delta
-from tests.helpers.basic import (
+from captum.testing.attr.helpers.attribution_delta_util import assert_attribution_delta
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_MultiInput,
 )
-from tests.helpers.classification_models import SoftmaxModel
+from captum.testing.helpers.classification_models import SoftmaxModel
+from packaging import version
 from torch import Tensor
 from torch.nn import Module
 
@@ -44,7 +51,7 @@ class Test(BaseTest):
         inputs = torch.tensor([[1.0, -20.0, 10.0]])
         baselines = torch.zeros(3, 3)
         lgs = LayerGradientShap(model, model.linear2, multiply_by_inputs=False)
-        attrs = lgs.attribute(
+        attrs = lgs.attribute(  # type: ignore[has-type]
             inputs,
             baselines,
             target=0,
@@ -105,7 +112,7 @@ class Test(BaseTest):
         )
 
     def test_classification(self) -> None:
-        def custom_baseline_fn(inputs):
+        def custom_baseline_fn(inputs: Tensor) -> Tensor:
             num_in = inputs.shape[1]
             return torch.arange(0.0, num_in * 4.0).reshape(4, num_in)
 
@@ -165,6 +172,7 @@ class Test(BaseTest):
         model: Module,
         layer: Module,
         inputs: TensorOrTupleOfTensorsGeneric,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         baselines: Union[TensorOrTupleOfTensorsGeneric, Callable],
         target: TargetType,
         expected: Union[
@@ -181,7 +189,7 @@ class Test(BaseTest):
         add_args: Any = None,
     ) -> None:
         lgs = LayerGradientShap(model, layer)
-        attrs, delta = lgs.attribute(
+        attrs, delta = lgs.attribute(  # type: ignore[has-type]
             inputs,
             baselines,
             target=target,
@@ -194,7 +202,13 @@ class Test(BaseTest):
         assertTensorTuplesAlmostEqual(self, attrs, expected, delta=0.005)
         if expected_delta is None:
             assert_attribution_delta(
-                self, inputs, attrs, n_samples, delta, is_layer=True
+                # pyre-fixme[6]: For 1st argument expected `FbBaseTest` but got `Test`.
+                self,  # type: ignore
+                inputs,
+                attrs,
+                n_samples,
+                delta,
+                is_layer=True,
             )
         else:
             for delta_i, expected_delta_i in zip(delta, expected_delta):

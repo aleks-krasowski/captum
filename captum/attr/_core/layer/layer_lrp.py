@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-import typing
-from typing import Any, cast, List, Tuple, Union
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+import typing
+from typing import cast, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+
+import torch
 from captum._utils.common import (
     _format_tensor_into_tuples,
     _reduce_list,
@@ -13,15 +21,18 @@ from captum._utils.gradient import (
     undo_gradient_requirements,
 )
 from captum._utils.typing import (
-    Literal,
     ModuleOrModuleList,
     TargetType,
     TensorOrTupleOfTensorsGeneric,
 )
 from captum.attr._core.lrp import LRP
 from captum.attr._utils.attribution import LayerAttribution
+from captum.attr._utils.lrp_rules import PropagationRule
 from torch import Tensor
 from torch.nn import Module
+from torch.utils.hooks import RemovableHandle
+
+T = TypeVar("T")
 
 
 class LayerLRP(LRP, LayerAttribution):
@@ -37,6 +48,14 @@ class LayerLRP(LRP, LayerAttribution):
     [https://doi.org/10.1016/j.dsp.2017.10.011] and the publication by
     Ancona et al. [https://openreview.net/forum?id=Sy21R9JAW].
     """
+
+    # pyrefly: ignore [bad-override-mutable-attribute]
+    device_ids: List[int]
+    verbose: bool
+    layers: List[Module]
+    attribute_to_layer_input: bool = False
+    backward_handles: List[RemovableHandle]
+    forward_handles: List[RemovableHandle]
 
     def __init__(self, model: Module, layer: ModuleOrModuleList) -> None:
         """
@@ -61,22 +80,12 @@ class LayerLRP(LRP, LayerAttribution):
             self.device_ids = cast(List[int], self.model.device_ids)
 
     @typing.overload  # type: ignore
+    # pyrefly: ignore [inconsistent-overload]
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
-        return_convergence_delta: Literal[False] = False,
-        attribute_to_layer_input: bool = False,
-        verbose: bool = False,
-    ) -> Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]]: ...
-
-    @typing.overload
-    def attribute(
-        self,
-        inputs: TensorOrTupleOfTensorsGeneric,
-        target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         *,
         return_convergence_delta: Literal[True],
         attribute_to_layer_input: bool = False,
@@ -86,11 +95,23 @@ class LayerLRP(LRP, LayerAttribution):
         Union[Tensor, List[Tensor]],
     ]: ...
 
+    @typing.overload
+    # pyrefly: ignore [inconsistent-overload]
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
+        return_convergence_delta: Literal[False] = False,
+        attribute_to_layer_input: bool = False,
+        verbose: bool = False,
+    ) -> Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]]: ...
+
+    def attribute(
+        self,
+        inputs: TensorOrTupleOfTensorsGeneric,
+        target: TargetType = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: bool = False,
         attribute_to_layer_input: bool = False,
         verbose: bool = False,
@@ -215,23 +236,25 @@ class LayerLRP(LRP, LayerAttribution):
         self.backward_handles = []
         self.forward_handles = []
 
-        inputs = _format_tensor_into_tuples(inputs)
-        gradient_mask = apply_gradient_requirements(inputs)
+        inputs_tuple = _format_tensor_into_tuples(inputs)
+        gradient_mask = apply_gradient_requirements(inputs_tuple)
 
         try:
             # 1. Forward pass
             output = self._compute_output_and_change_weights(
-                inputs, target, additional_forward_args
+                inputs_tuple,
+                target,
+                additional_forward_args,
             )
             self._register_forward_hooks()
             # 2. Forward pass + backward pass
             _ = compute_gradients(
-                self._forward_fn_wrapper, inputs, target, additional_forward_args
+                self._forward_fn_wrapper, inputs_tuple, target, additional_forward_args
             )
             relevances = self._get_output_relevance(output)
         finally:
             self._restore_model()
-        undo_gradient_requirements(inputs, gradient_mask)
+        undo_gradient_requirements(inputs_tuple, gradient_mask)
 
         if return_convergence_delta:
             delta: Union[Tensor, List[Tensor]]
@@ -239,7 +262,10 @@ class LayerLRP(LRP, LayerAttribution):
                 delta = []
                 for relevance_layer in relevances:
                     delta.append(
-                        self.compute_convergence_delta(relevance_layer, output)
+                        self.compute_convergence_delta(
+                            cast(Union[Tensor, Tuple[Tensor, ...]], relevance_layer),
+                            output,
+                        )
                     )
             else:
                 delta = self.compute_convergence_delta(
@@ -249,28 +275,35 @@ class LayerLRP(LRP, LayerAttribution):
         else:
             return relevances  # type: ignore
 
-    def _get_single_output_relevance(self, layer, output):
+    def _get_single_output_relevance(
+        self, layer: Module, output: Tensor
+    ) -> Union[Tensor, Tuple[Tensor, ...]]:
         if self.attribute_to_layer_input:
-            normalized_relevances = layer.rule.relevance_input
+            normalized_relevances = cast(
+                Dict[torch.device, Tensor],
+                cast(PropagationRule, layer.rule).relevance_input,
+            )
         else:
-            normalized_relevances = layer.rule.relevance_output
+            normalized_relevances = cast(PropagationRule, layer.rule).relevance_output
         key_list = _sort_key_list(list(normalized_relevances.keys()), self.device_ids)
-        normalized_relevances = _reduce_list(
+        normalized_relevances_reduced = _reduce_list(
             [normalized_relevances[device_id] for device_id in key_list]
         )
 
-        if isinstance(normalized_relevances, tuple):
+        if isinstance(normalized_relevances_reduced, tuple):
             return tuple(
                 normalized_relevance
                 * output.reshape((-1,) + (1,) * (normalized_relevance.dim() - 1))
-                for normalized_relevance in normalized_relevances
+                for normalized_relevance in normalized_relevances_reduced
             )
         else:
-            return normalized_relevances * output.reshape(
-                (-1,) + (1,) * (normalized_relevances.dim() - 1)
+            return normalized_relevances_reduced * output.reshape(
+                (-1,) + (1,) * (normalized_relevances_reduced.dim() - 1)
             )
 
-    def _get_output_relevance(self, output):
+    def _get_output_relevance(
+        self, output: Tensor
+    ) -> Union[Tensor, Tuple[Tensor, ...], List[Union[Tensor, Tuple[Tensor, ...]]]]:
         if isinstance(self.layer, list):
             relevances = []
             for layer in self.layer:
@@ -281,8 +314,8 @@ class LayerLRP(LRP, LayerAttribution):
 
     @staticmethod
     def _convert_list_to_tuple(
-        relevances: Union[List[Any], Tuple[Any, ...]]
-    ) -> Tuple[Any, ...]:
+        relevances: Union[List[T], Tuple[T, ...]],
+    ) -> Tuple[T, ...]:
         if isinstance(relevances, list):
             return tuple(relevances)
         else:

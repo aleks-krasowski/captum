@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from inspect import signature
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from captum.attr._core.deep_lift import DeepLift, DeepLiftShap
 from captum.attr._core.integrated_gradients import IntegratedGradients
-from tests.helpers.basic import (
+from captum.testing.helpers.basic import (
     assertAttributionComparision,
     assertTensorAlmostEqual,
     BaseTest,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
+    BasicModel_MaxPool_ReLU,
     BasicModelWithReusedModules,
     Conv1dSeqModel,
     LinearMaxPoolLinearModel,
@@ -21,6 +29,9 @@ from tests.helpers.basic_models import (
 )
 from torch import Tensor
 from torch.nn import Module
+
+# A tuple of baselines, where each element is a Tensor, int, or float
+BaselineTuple = Tuple[Union[Tensor, int, float], ...]
 
 
 class Test(BaseTest):
@@ -48,7 +59,7 @@ class Test(BaseTest):
         baselines = (b1, b2)
         model = ReLUDeepLiftModel()
         dl = DeepLift(model)
-        attributions, delta = dl.attribute(
+        attributions, delta = dl.attribute(  # type: ignore[has-type]
             inputs, baselines, return_convergence_delta=True
         )
         self.assertEqual(attributions[0][0], 2.0)
@@ -62,7 +73,7 @@ class Test(BaseTest):
 
         model = ReLUDeepLiftModel()
         dl = DeepLift(model, multiply_by_inputs=False)
-        attributions = dl.attribute(inputs)
+        attributions = dl.attribute(inputs)  # type: ignore[has-type]
         self.assertEqual(attributions[0][0], 2.0)
         self.assertEqual(attributions[1][0], 0.5)
 
@@ -108,10 +119,10 @@ class Test(BaseTest):
         x1 = torch.tensor([[-10.0, 1.0, -5.0], [2.0, 3.0, 4.0]], requires_grad=True)
         x2 = torch.tensor([[3.0, 3.0, 1.0], [2.3, 5.0, 4.0]], requires_grad=True)
         inputs = (x1, x2)
-        attributions1 = DeepLift(model1).attribute(inputs)
+        attributions1 = DeepLift(model1).attribute(inputs)  # type: ignore[has-type]
 
         model2 = ReLULinearModel()
-        attributions2 = DeepLift(model2).attribute(inputs)
+        attributions2 = DeepLift(model2).attribute(inputs)  # type: ignore[has-type]
         assertTensorAlmostEqual(self, attributions1[0], attributions2[0])
         assertTensorAlmostEqual(self, attributions1[1], attributions2[1])
 
@@ -124,10 +135,14 @@ class Test(BaseTest):
         b2 = torch.tensor([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
         baselines = (b1, b2)
 
-        attributions1 = DeepLiftShap(model1).attribute(inputs, baselines)
+        attributions1 = DeepLiftShap(model1).attribute(  # type: ignore[has-type]
+            inputs, baselines
+        )
 
         model2 = ReLULinearModel()
-        attributions2 = DeepLiftShap(model2).attribute(inputs, baselines)
+        attributions2 = DeepLiftShap(model2).attribute(  # type: ignore[has-type]
+            inputs, baselines
+        )
         assertTensorAlmostEqual(self, attributions1[0], attributions2[0])
         assertTensorAlmostEqual(self, attributions1[1], attributions2[1])
 
@@ -146,7 +161,7 @@ class Test(BaseTest):
         rand_seq_data = torch.abs(torch.randn(2, 4, 1000))
         rand_seq_ref = torch.abs(torch.randn(2, 4, 1000))
         dls = DeepLift(model)
-        attr = dls.attribute(
+        attr = dls.attribute(  # type: ignore[has-type]
             rand_seq_data,
             rand_seq_ref,
             custom_attribution_func=_hypothetical_contrib_func,
@@ -178,7 +193,9 @@ class Test(BaseTest):
         baselines = (b1, b2)
 
         model = ReLUDeepLiftModel()
-        attr = DeepLiftShap(model, multiply_by_inputs=False).attribute(
+        attr = DeepLiftShap(
+            model, multiply_by_inputs=False
+        ).attribute(  # type: ignore[has-type]
             inputs, baselines
         )
         assertTensorAlmostEqual(self, attr[0], 2 * torch.ones(4, 1, 1, 1))
@@ -227,14 +244,19 @@ class Test(BaseTest):
         self._deeplift_assert(model, dl_shap, inputs, gen_baselines_with_inputs)
         with self.assertRaises(AssertionError):
             self._deeplift_assert(
-                model, DeepLiftShap(model), inputs, gen_baselines_returns_array
+                model,
+                DeepLiftShap(model),
+                inputs,
+                gen_baselines_returns_array,  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
             self._deeplift_assert(model, dl_shap, inputs, gen_baselines_scalar)
 
         baselines = gen_baselines()
-        attributions = dl_shap.attribute(inputs, baselines)
-        attributions_with_func = dl_shap.attribute(inputs, gen_baselines)
+        attributions = dl_shap.attribute(inputs, baselines)  # type: ignore[has-type]
+        attributions_with_func = dl_shap.attribute(  # type: ignore[has-type]
+            inputs, gen_baselines
+        )
         assertTensorAlmostEqual(self, attributions[0], attributions_with_func[0])
         assertTensorAlmostEqual(self, attributions[1], attributions_with_func[1])
 
@@ -254,7 +276,7 @@ class Test(BaseTest):
         inputs = (x1, x2)
         baselines = (b1, b2)
         dls = DeepLiftShap(model)
-        attr_w_func = dls.attribute(
+        attr_w_func = dls.attribute(  # type: ignore[has-type]
             inputs, baselines, custom_attribution_func=custom_attr_func
         )
 
@@ -266,7 +288,7 @@ class Test(BaseTest):
         rand_seq_data = torch.abs(torch.randn(2, 4, 1000))
         rand_seq_ref = torch.abs(torch.randn(3, 4, 1000))
         dls = DeepLiftShap(model)
-        attr = dls.attribute(
+        attr = dls.attribute(  # type: ignore[has-type]
             rand_seq_data,
             rand_seq_ref,
             custom_attribution_func=_hypothetical_contrib_func,
@@ -274,12 +296,45 @@ class Test(BaseTest):
         )
         self.assertEqual(attr.shape, rand_seq_data.shape)
 
+    def test_deepliftshap_maxpool_relu_nonzero_baselines(self) -> None:
+        model = BasicModel_MaxPool_ReLU().double().eval()
+        input = torch.tensor(
+            [
+                [
+                    [15.4100, -2.9343, -21.7879],
+                    [5.6843, -10.8452, -13.9860],
+                ]
+            ],
+            dtype=torch.float64,
+        )
+        baselines = torch.tensor(
+            [
+                [
+                    [-1.4347, -1.1161, -6.1358],
+                    [0.3159, -4.9268, 2.4841],
+                ],
+                [
+                    [-11.2560, -3.1700, -10.9247],
+                    [-0.8519, 3.2761, -7.6071],
+                ],
+            ],
+            dtype=torch.float64,
+        )
+
+        _, delta = DeepLiftShap(model).attribute(  # type: ignore[has-type]
+            input,
+            baselines,
+            return_convergence_delta=True,
+        )
+
+        assertTensorAlmostEqual(self, delta, torch.zeros_like(delta), 1e-10, "max")
+
     def test_reusable_modules(self) -> None:
         model = BasicModelWithReusedModules()
         input = torch.rand(1, 3)
         dl = DeepLift(model)
         with self.assertRaises(RuntimeError):
-            dl.attribute(input, target=0)
+            dl.attribute(input, target=0)  # type: ignore[has-type]
 
     def test_lin_maxpool_lin_classification(self) -> None:
         inputs = torch.ones(2, 4)
@@ -287,7 +342,7 @@ class Test(BaseTest):
 
         model = LinearMaxPoolLinearModel()
         dl = DeepLift(model)
-        attrs, delta = dl.attribute(
+        attrs, delta = dl.attribute(  # type: ignore[has-type]
             inputs, baselines, target=0, return_convergence_delta=True
         )
         expected = torch.Tensor([[0.0, 0.0, 0.0, -8.0], [0.0, -7.0, 0.0, 0.0]])
@@ -295,41 +350,53 @@ class Test(BaseTest):
         assertTensorAlmostEqual(self, attrs, expected, 0.0001)
         assertTensorAlmostEqual(self, delta, expected_delta, 0.0001)
 
+    def test_futures_not_implemented(self) -> None:
+        model = ReLUDeepLiftModel()
+        dl = DeepLift(model, multiply_by_inputs=False)
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = dl.attribute_future()  # type: ignore
+        self.assertEqual(attributions, None)
+
     def _deeplift_assert(
         self,
         model: Module,
         attr_method: Union[DeepLift, DeepLiftShap],
         inputs: Tuple[Tensor, ...],
-        baselines,
+        baselines: Union[BaselineTuple, Callable[..., BaselineTuple]],
         custom_attr_func: Optional[Callable[..., Tuple[Tensor, ...]]] = None,
     ) -> None:
         input_bsz = len(inputs[0])
+        baselines_tuple: BaselineTuple
         if callable(baselines):
             baseline_parameters = signature(baselines).parameters
             if len(baseline_parameters) > 0:
-                baselines = baselines(inputs)
+                baselines_tuple = baselines(inputs)
             else:
-                baselines = baselines()
+                baselines_tuple = baselines()
+        else:
+            baselines_tuple = baselines
 
+        first_baseline = baselines_tuple[0]
         baseline_bsz = (
-            len(baselines[0]) if isinstance(baselines[0], torch.Tensor) else 1
+            len(first_baseline) if isinstance(first_baseline, torch.Tensor) else 1
         )
         # Run attribution multiple times to make sure that it is
         # working as expected
         for _ in range(5):
             model.zero_grad()
-            attributions, delta = attr_method.attribute(
+            attributions, delta = attr_method.attribute(  # type: ignore[has-type]
                 inputs,
                 baselines,
                 return_convergence_delta=True,
                 custom_attribution_func=custom_attr_func,
             )
-            attributions_without_delta = attr_method.attribute(
+            attributions_no_delta = attr_method.attribute(  # type: ignore[has-type]
                 inputs, baselines, custom_attribution_func=custom_attr_func
             )
 
             for attribution, attribution_without_delta in zip(
-                attributions, attributions_without_delta
+                attributions, attributions_no_delta
             ):
                 self.assertTrue(
                     torch.all(torch.eq(attribution, attribution_without_delta))
@@ -355,13 +422,18 @@ class Test(BaseTest):
             )
             for input, attribution in zip(inputs, attributions):
                 self.assertEqual(input.shape, attribution.shape)
-            if (
-                isinstance(baselines[0], (int, float))
-                or inputs[0].shape == baselines[0].shape
-            ):
+            first_baseline_item = baselines_tuple[0]
+            is_scalar_baseline = isinstance(first_baseline_item, (int, float))
+            has_matching_shape = (
+                isinstance(first_baseline_item, Tensor)
+                and inputs[0].shape == first_baseline_item.shape
+            )
+            if is_scalar_baseline or has_matching_shape:
                 # Compare with Integrated Gradients
                 ig = IntegratedGradients(model)
-                attributions_ig = ig.attribute(inputs, baselines)
+                attributions_ig = ig.attribute(  # type: ignore[has-type]
+                    inputs, baselines
+                )
                 assertAttributionComparision(self, attributions, attributions_ig)
 
 

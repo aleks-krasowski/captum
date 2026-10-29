@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -69,6 +76,7 @@ class SimilarityInfluence(DataInfluence):
         influence_src_dataset: Dataset,
         activation_dir: str,
         model_id: str = "",
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         similarity_metric: Callable = cosine_similarity,
         similarity_direction: str = "max",
         batch_size: int = 1,
@@ -120,11 +128,18 @@ class SimilarityInfluence(DataInfluence):
                     For example, `similarity_metric(av_test, av_src)` should return a
                     tensor of shape (3, 16).
 
+            similarity_direction (str): Specifies the direction for selecting
+                    top-k similar examples. If set to "max", the examples with
+                    highest similarity scores are selected (most similar). If
+                    set to "min", the examples with lowest similarity scores
+                    are selected (least similar / most distant).
+                    Default: "max"
             batch_size (int): Batch size for iterating through `influence_src_dataset`.
             **kwargs: Additional key-value arguments that are necessary for specific
                     implementation of `DataInfluence` abstract class.
         """
         self.module = module
+        # pyre-fixme[4]: Attribute must be annotated.
         self.layers = [layers] if isinstance(layers, str) else layers
         self.influence_src_dataset = influence_src_dataset
         self.activation_dir = activation_dir
@@ -132,6 +147,7 @@ class SimilarityInfluence(DataInfluence):
         self.batch_size = batch_size
 
         if similarity_direction == "max" or similarity_direction == "min":
+            # pyre-fixme[4]: Attribute must be annotated.
             self.similarity_direction = similarity_direction
         else:
             raise ValueError(
@@ -141,6 +157,7 @@ class SimilarityInfluence(DataInfluence):
 
         if similarity_metric is cosine_similarity:
             if "replace_nan" in kwargs:
+                # pyre-fixme[4]: Attribute must be annotated.
                 self.replace_nan = kwargs["replace_nan"]
             else:
                 self.replace_nan = -2 if self.similarity_direction == "max" else 2
@@ -148,6 +165,7 @@ class SimilarityInfluence(DataInfluence):
 
         self.similarity_metric = similarity_metric
 
+        # pyre-fixme[4]: Attribute must be annotated.
         self.influence_src_dataloader = DataLoader(
             influence_src_dataset, batch_size, shuffle=False
         )
@@ -159,6 +177,8 @@ class SimilarityInfluence(DataInfluence):
         additional_forward_args: Optional[Any] = None,
         load_src_from_disk: bool = True,
         **kwargs: Any,
+        # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
+        #  `typing.Dict[<key type>, <value type>]` to avoid runtime subscripting errors.
     ) -> Dict:
         r"""
         Args:
@@ -287,7 +307,11 @@ class SimilarityInfluence(DataInfluence):
                     "returned as a tensor with [inputs_idx, src_dataset_idx] pairs "
                     "which may have corrupted similarity scores."
                 )
-                warnings.warn(zero_warning, RuntimeWarning)
+                warnings.warn(
+                    zero_warning,
+                    RuntimeWarning,
+                    stacklevel=1,
+                )
                 key = "-".join(["zero_acts", layer])
                 influences[key] = zero_acts
 

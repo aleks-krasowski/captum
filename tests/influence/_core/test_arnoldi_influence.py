@@ -1,8 +1,13 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 import tempfile
 from typing import Callable, List, Optional, Tuple
 
 import torch
-
 import torch.nn as nn
 from captum.influence._core.arnoldi_influence_function import (
     _parameter_arnoldi,
@@ -16,10 +21,9 @@ from captum.influence._utils.common import (
     _top_eigen,
     _unflatten_params_factory,
 )
-from parameterized import parameterized
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.influence.common import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.influence.common import (
     _format_batch_into_tuple,
     build_test_name_func,
     DataInfluenceConstructor,
@@ -30,10 +34,12 @@ from tests.helpers.influence.common import (
     is_gpu,
     UnpackDataset,
 )
+from parameterized import parameterized
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestArnoldiInfluence(BaseTest):
     @parameterized.expand(
         [
@@ -229,7 +235,7 @@ class TestArnoldiInfluence(BaseTest):
                         "max",
                     )
 
-    # TODO: for some unknow reason, this test and the test below does not work
+    # TODO: for some unknown reason, this test and the test below does not work
     # on `cuda_data_parallel` setting. We need to investigate why.
     # Use a local version of setting list for these two tests for now
     # since we have changed the default setting list to includes all options.
@@ -445,6 +451,7 @@ class TestArnoldiInfluence(BaseTest):
         checkpoints can be different, and is specified using the `model_type` argument.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,

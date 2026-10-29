@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import io
 import unittest
 import unittest.mock
 from functools import partial
-from typing import Any, Callable, Generator, List, Optional, Tuple, Union
+from typing import Any, Callable, cast, Generator, List, Optional, Tuple, Union
 
 import torch
 from captum._utils.models.linear_model import SGDLasso, SkLearnLasso
@@ -17,12 +24,12 @@ from captum.attr._utils.common import (
     _format_input_baseline,
     _format_tensor_into_tuples,
 )
-from tests.helpers.basic import (
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
 )
-from tests.helpers.basic_models import (
+from captum.testing.helpers.basic_models import (
     BasicLinearModel,
     BasicModel_MultiLayer,
     BasicModel_MultiLayer_MultiInput,
@@ -32,7 +39,7 @@ from torch import Tensor
 
 
 def alt_perturb_func(
-    original_inp: TensorOrTupleOfTensorsGeneric, **kwargs
+    original_inp: TensorOrTupleOfTensorsGeneric, **kwargs: Any
 ) -> TensorOrTupleOfTensorsGeneric:
     if isinstance(original_inp, Tensor):
         device = original_inp.device
@@ -44,23 +51,26 @@ def alt_perturb_func(
     probs = torch.ones(1, kwargs["num_interp_features"]) * 0.5
     curr_sample = torch.bernoulli(probs).to(device=device)
 
-    binary_mask: TensorOrTupleOfTensorsGeneric
     if isinstance(original_inp, Tensor):
         binary_mask = curr_sample[0][feature_mask]
         return binary_mask * original_inp + (1 - binary_mask) * kwargs["baselines"]
     else:
-        binary_mask = tuple(
+        binary_mask_tuple = tuple(
             curr_sample[0][feature_mask[j]] for j in range(len(feature_mask))
         )
-        return tuple(
-            binary_mask[j] * original_inp[j]
-            + (1 - binary_mask[j]) * kwargs["baselines"][j]
-            for j in range(len(feature_mask))
+
+        return cast(
+            TensorOrTupleOfTensorsGeneric,
+            tuple(
+                binary_mask_tuple[j] * original_inp[j]
+                + (1 - binary_mask_tuple[j]) * kwargs["baselines"][j]
+                for j in range(len(feature_mask))
+            ),
         )
 
 
 def alt_perturb_generator(
-    original_inp: TensorOrTupleOfTensorsGeneric, **kwargs
+    original_inp: TensorOrTupleOfTensorsGeneric, **kwargs: Any
 ) -> Generator[TensorOrTupleOfTensorsGeneric, None, None]:
     while True:
         yield alt_perturb_func(original_inp, **kwargs)
@@ -86,9 +96,14 @@ def alt_to_interp_rep(
             ):
                 curr_total = 0
         else:
-            sum_diff = sum(
-                torch.sum(torch.abs((mask == i).float() * (sample - inp)))
-                for inp, sample, mask in zip(original_input, curr_sample, feature_mask)
+            sum_diff = cast(
+                Tensor,
+                sum(
+                    torch.sum(torch.abs((mask == i).float() * (sample - inp)))
+                    for inp, sample, mask in zip(
+                        original_input, curr_sample, feature_mask
+                    )
+                ),
             )
             if sum_diff > 0.001:
                 curr_total = 0
@@ -191,7 +206,9 @@ class Test(BaseTest):
         )
 
     @unittest.mock.patch("sys.stderr", new_callable=io.StringIO)
-    def test_simple_lime_with_show_progress(self, mock_stderr) -> None:
+    def test_simple_lime_with_show_progress(
+        self, mock_stderr: unittest.mock.Mock
+    ) -> None:
         net = BasicModel_MultiLayer()
         inp = torch.tensor([[20.0, 50.0, 30.0]], requires_grad=True)
 
@@ -426,7 +443,9 @@ class Test(BaseTest):
             lambda inp: int(torch.sum(net(inp)).item())
         )
 
-    def _single_input_scalar_lime_assert(self, func: Callable) -> None:
+    def _single_input_scalar_lime_assert(
+        self, func: Callable[[Tensor], Union[Tensor, float, int]]
+    ) -> None:
         inp = torch.tensor([[2.0, 10.0, 3.0]], requires_grad=True)
         mask = torch.tensor([[0, 0, 1]])
 
@@ -461,7 +480,22 @@ class Test(BaseTest):
         net = BasicModel_MultiLayer_MultiInput()
         self._multi_input_scalar_lime_assert(lambda *inp: torch.sum(net(*inp)).item())
 
-    def _multi_input_scalar_lime_assert(self, func: Callable) -> None:
+    def test_futures_not_implemented(self) -> None:
+        net = BasicLinearModel()
+        # no mask
+        lime = Lime(
+            net,
+            similarity_func=get_exp_kernel_similarity_function("cosine", 10.0),
+            interpretable_model=(SkLearnLasso(alpha=1.0)),
+        )
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = lime.attribute_future()  # type: ignore
+        self.assertEqual(attributions, None)
+
+    def _multi_input_scalar_lime_assert(
+        self, func: Callable[..., Union[Tensor, float, int]]
+    ) -> None:
         inp1 = torch.tensor([[23.0, 100.0, 0.0], [20.0, 50.0, 30.0]])
         inp2 = torch.tensor([[20.0, 50.0, 30.0], [0.0, 100.0, 0.0]])
         inp3 = torch.tensor([[0.0, 100.0, 10.0], [20.0, 10.0, 13.0]])
@@ -469,9 +503,9 @@ class Test(BaseTest):
         mask2 = torch.tensor([[0, 1, 2]])
         mask3 = torch.tensor([[0, 1, 2]])
         expected = (
-            [[3850.6666, 3850.6666, 3850.6666]] * 2,
-            [[305.5, 3850.6666, 410.1]] * 2,
-            [[305.5, 3850.6666, 410.1]] * 2,
+            [[3850.6666, 3850.6666, 3850.6666]],
+            [[305.5, 3850.6666, 410.1]],
+            [[305.5, 3850.6666, 410.1]],
         )
 
         self._lime_test_assert(
@@ -491,10 +525,10 @@ class Test(BaseTest):
 
     def _lime_test_assert(
         self,
-        model: Callable,
+        model: Callable[..., Union[int, float, Tensor]],
         test_input: TensorOrTupleOfTensorsGeneric,
-        expected_attr,
-        expected_coefs_only: Union[None, List, Tensor] = None,
+        expected_attr: Any,
+        expected_coefs_only: Union[None, List[List[Union[int, float]]], Tensor] = None,
         feature_mask: Union[None, TensorOrTupleOfTensorsGeneric] = None,
         additional_input: Any = None,
         perturbations_per_eval: Tuple[int, ...] = (1,),

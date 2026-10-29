@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import typing
-from typing import Any, Callable, cast, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from captum._utils.typing import BaselineType, TargetType, TensorOrTupleOfTensorsGeneric
 from captum.attr import (
     DeepLift,
+    FeatureAblation,
     GradientShap,
     GuidedBackprop,
     IntegratedGradients,
@@ -13,9 +22,9 @@ from captum.attr import (
 )
 from captum.metrics import sensitivity_max
 from captum.metrics._core.sensitivity import default_perturb_func
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import (
     BasicModel2,
     BasicModel4_MultiArgs,
     BasicModel_ConvNet_One_Conv,
@@ -25,17 +34,17 @@ from torch import Tensor
 
 
 @typing.overload
-def _perturb_func(inputs: Tensor) -> Tensor: ...
-
-
-@typing.overload
 def _perturb_func(inputs: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]: ...
 
 
+@typing.overload
+def _perturb_func(inputs: Tensor) -> Tensor: ...
+
+
 def _perturb_func(
-    inputs: TensorOrTupleOfTensorsGeneric,
+    inputs: Union[Tensor, Tuple[Tensor, ...]],
 ) -> Union[Tensor, Tuple[Tensor, ...]]:
-    def perturb_ratio(input):
+    def perturb_ratio(input: Tensor) -> Tensor:
         return (
             torch.arange(-torch.numel(input[0]) // 2, torch.numel(input[0]) // 2)
             .view(input[0].shape)
@@ -48,7 +57,7 @@ def _perturb_func(
         input1 = inputs[0]
         input2 = inputs[1]
     else:
-        input1 = cast(Tensor, inputs)
+        input1 = inputs
 
     perturbed_input1 = input1 + perturb_ratio(input1)
 
@@ -58,6 +67,7 @@ def _perturb_func(
     return perturbed_input1, input2 + perturb_ratio(input2)
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_basic_sensitivity_max_single(self) -> None:
         model = BasicModel2()
@@ -167,11 +177,11 @@ class Test(BaseTest):
         input = torch.arange(1.0, 13.0).view(4, 3)
 
         additional_forward_args = (None, True)
-        targets: List = [(0, 1, 1), (0, 1, 1), (1, 1, 1), (0, 1, 1)]
+        targets: List[Tuple[int, ...]] = [(0, 1, 1), (0, 1, 1), (1, 1, 1), (0, 1, 1)]
 
         ig = IntegratedGradients(model)
         self.sensitivity_max_assert(
-            ig.attribute,
+            ig.attribute,  # type: ignore[has-type]
             input,
             torch.tensor([0.006, 0.01, 0.001, 0.008]),
             n_perturb_samples=1,
@@ -187,7 +197,7 @@ class Test(BaseTest):
         input = torch.arange(1.0, 16.0).view(5, 3)
 
         additional_forward_args = (torch.ones(5, 3).float(), False)
-        targets: List = [0, 0, 0, 0, 0]
+        targets: List[int] = [0, 0, 0, 0, 0]
 
         sa = Saliency(model)
 
@@ -223,7 +233,7 @@ class Test(BaseTest):
         ig = DeepLift(model)
 
         sensitivity1 = self.sensitivity_max_assert(
-            ig.attribute,
+            ig.attribute,  # type: ignore[has-type]
             (input1, input2),
             torch.zeros(1),
             additional_forward_args=args,
@@ -233,7 +243,7 @@ class Test(BaseTest):
         )
 
         sensitivity2 = self.sensitivity_max_assert(
-            ig.attribute,
+            ig.attribute,  # type: ignore[has-type]
             (input1, input2),
             torch.zeros(1),
             additional_forward_args=args,
@@ -248,11 +258,11 @@ class Test(BaseTest):
         input = torch.arange(1.0, 13.0).view(4, 3)
         baseline = torch.ones(4, 3)
         additional_forward_args = (torch.arange(1, 13).view(4, 3).float(), True)
-        targets: List = [(0, 1, 1), (0, 1, 1), (1, 1, 1), (0, 1, 1)]
+        targets: List[Tuple[int, ...]] = [(0, 1, 1), (0, 1, 1), (1, 1, 1), (0, 1, 1)]
         dl = DeepLift(model)
 
         sens1 = self.sensitivity_max_assert(
-            dl.attribute,
+            dl.attribute,  # type: ignore[has-type]
             input,
             torch.tensor([0.01, 0.003, 0.001, 0.001]),
             additional_forward_args=additional_forward_args,
@@ -262,7 +272,7 @@ class Test(BaseTest):
             perturb_func=_perturb_func,
         )
         sens2 = self.sensitivity_max_assert(
-            dl.attribute,
+            dl.attribute,  # type: ignore[has-type]
             input,
             torch.zeros(4),
             additional_forward_args=additional_forward_args,
@@ -274,17 +284,54 @@ class Test(BaseTest):
         )
         assertTensorAlmostEqual(self, sens1, sens2)
 
+    def test_sensitivity_max_with_feature_mask(self) -> None:
+        r"""
+        Test that sensitivity_max correctly expands feature_mask
+        when batching perturbed inputs.
+        """
+        model = BasicModel_MultiLayer()
+        input = torch.arange(1.0, 7.0).view(2, 3)
+        feature_mask = torch.tensor([[0, 0, 1], [0, 1, 1]])
+        target: List[int] = [0, 0]
+
+        fa = FeatureAblation(model)
+
+        sens1 = sensitivity_max(
+            fa.attribute,
+            input,
+            perturb_func=_perturb_func,
+            target=target,
+            feature_mask=feature_mask,
+            n_perturb_samples=5,
+        )
+        self.assertEqual(sens1.shape, torch.Size([2]))
+
+        # Verify batched computation gives the same result
+        sens2 = sensitivity_max(
+            fa.attribute,
+            input,
+            perturb_func=_perturb_func,
+            target=target,
+            feature_mask=feature_mask,
+            n_perturb_samples=5,
+            max_examples_per_batch=2,
+        )
+        assertTensorAlmostEqual(self, sens1, sens2, 0.0)
+
     def sensitivity_max_assert(
         self,
-        expl_func: Callable,
+        expl_func: Callable[..., Union[Tensor, Tuple[Tensor, ...]]],
         inputs: TensorOrTupleOfTensorsGeneric,
         expected_sensitivity: Tensor,
-        perturb_func: Callable = _perturb_func,
+        perturb_func: Union[
+            Callable[[Tensor], Tensor],
+            Callable[[Tuple[Tensor, ...]], Tuple[Tensor, ...]],
+        ] = _perturb_func,
         n_perturb_samples: int = 5,
         max_examples_per_batch: Optional[int] = None,
         baselines: Optional[BaselineType] = None,
         target: Optional[TargetType] = None,
-        additional_forward_args: Optional[Any] = None,
+        additional_forward_args: Optional[object] = None,
     ) -> Tensor:
         if baselines is None:
             sens = sensitivity_max(

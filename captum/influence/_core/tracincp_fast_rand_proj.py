@@ -1,15 +1,32 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import threading
 import warnings
 from collections import defaultdict
-from typing import Any, Callable, cast, Dict, Iterator, List, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    cast,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import torch
 from captum._utils.common import _get_module_from_name, _sort_key_list
 from captum._utils.gradient import _gather_distributed_tensors
 from captum._utils.progress import NullProgress, progress
-
 from captum.influence._core.tracincp import (
     _influence_route_to_helpers,
     KMostInfluentialResults,
@@ -84,10 +101,14 @@ class TracInCPFast(TracInCPBase):
         model: Module,
         final_fc_layer: Union[Module, str],
         train_dataset: Union[Dataset, DataLoader],
+        # pyre-fixme[24]: Generic type `Iterator` expects 1 type parameter.
         checkpoints: Union[str, List[str], Iterator],
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         checkpoints_load_func: Callable = _load_flexible_state_dict,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         batch_size: Union[int, None] = 1,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         test_loss_fn: Optional[Union[Module, Callable]] = None,
         vectorize: bool = False,
     ) -> None:
@@ -183,15 +204,17 @@ class TracInCPFast(TracInCPBase):
         self.vectorize = vectorize
 
         # TODO: restore prior state
-        self.final_fc_layer = final_fc_layer  # type: ignore
+        self.final_fc_layer = cast(Module, final_fc_layer)
         for param in self.final_fc_layer.parameters():
             param.requires_grad = True
 
         assert loss_fn is not None, "loss function must not be none"
 
         # check `loss_fn`
+        # pyre-fixme[4]: Attribute must be annotated.
         self.reduction_type = _check_loss_fn(self, loss_fn, "loss_fn")
         # check `test_loss_fn` if it was provided
+        # pyre-fixme[4]: Attribute must be annotated.
         self.test_reduction_type = (
             self.reduction_type
             if test_loss_fn is None
@@ -200,10 +223,11 @@ class TracInCPFast(TracInCPBase):
 
     @property
     def final_fc_layer(self) -> Module:
+        # pyre-fixme[16]: `TracInCPFast` has no attribute `_final_fc_layer`.
         return self._final_fc_layer
 
     @final_fc_layer.setter
-    def final_fc_layer(self, layer: Union[Module, str]):
+    def final_fc_layer(self, layer: Union[Module, str]) -> None:
         if isinstance(layer, str):
             try:
                 self._final_fc_layer = _get_module_from_name(self.model, layer)
@@ -216,7 +240,7 @@ class TracInCPFast(TracInCPBase):
         else:
             self._final_fc_layer = layer
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def influence(  # type: ignore[override]
         self,
         inputs: Tuple[Any, ...],
@@ -306,6 +330,7 @@ class TracInCPFast(TracInCPBase):
             show_progress=show_progress,
         )
 
+    # pyre-fixme[3]: Return type must be annotated.
     def _influence_batch_tracincp_fast(
         self,
         test_batch: Tuple[Any, ...],
@@ -317,6 +342,8 @@ class TracInCPFast(TracInCPBase):
         described in the `TracInCPFast` class description.
         """
 
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def get_checkpoint_contribution(checkpoint):
 
             assert (
@@ -402,10 +429,13 @@ class TracInCPFast(TracInCPBase):
         """
 
         train_dataloader = self.train_dataloader
+        train_dataloader_iterable: Union[DataLoader, Iterable[Tuple[object, ...]]] = (
+            train_dataloader
+        )
 
         if show_progress:
-            train_dataloader = progress(
-                train_dataloader,
+            train_dataloader_iterable = progress(
+                cast(Iterable[Tuple[object, ...]], train_dataloader),
                 desc=(
                     f"Using {self.get_name()} to compute "
                     "influence for training batches"
@@ -416,7 +446,7 @@ class TracInCPFast(TracInCPBase):
         return torch.cat(
             [
                 self._influence_batch_tracincp_fast(inputs, batch)
-                for batch in train_dataloader
+                for batch in train_dataloader_iterable
             ],
             dim=1,
         )
@@ -560,9 +590,13 @@ class TracInCPFast(TracInCPBase):
                     "Therefore, if showing the progress of the computation of self "
                     "influence scores, only the number of batches processed can be "
                     "displayed, and not the percentage completion of the computation, "
-                    "nor any time estimates."
+                    "nor any time estimates.",
+                    stacklevel=1,
                 )
 
+        # pyre-fixme[53]: Captured variable `inputs_len` is not annotated.
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def get_checkpoint_contribution(checkpoint):
             # This function returns a 1D tensor representing the contribution to the
             # self influence score for the given checkpoint, for all batches in
@@ -604,7 +638,11 @@ class TracInCPFast(TracInCPBase):
                 )
 
                 checkpoint_contribution.append(
+                    # pyre-fixme[58]: `**` is not supported for operand types
+                    #  `Tensor` and `int`.
                     torch.sum(batch_jacobian**2, dim=1)
+                    # pyre-fixme[58]: `**` is not supported for operand types
+                    #  `Tensor` and `int`.
                     * torch.sum(batch_layer_input**2, dim=1)
                     * learning_rate
                 )
@@ -637,7 +675,7 @@ class TracInCPFast(TracInCPBase):
                 checkpoints_progress.update()
             return batches_self_tracin_scores
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def self_influence(
         self,
         inputs: Optional[Union[Tuple[Any, ...], DataLoader]] = None,
@@ -718,6 +756,7 @@ def _basic_computation_tracincp_fast(
     influence_instance: TracInCPFast,
     inputs: Tuple[Any, ...],
     targets: Tensor,
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     loss_fn: Optional[Union[Module, Callable]] = None,
     reduction_type: Optional[str] = None,
 ) -> Tuple[Tensor, Tensor]:
@@ -762,7 +801,11 @@ def _basic_computation_tracincp_fast(
     layer_inputs: Dict[device, Tuple[Tensor, ...]] = defaultdict()
     lock = threading.Lock()
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def hook_wrapper(original_module):
+        # pyre-fixme[53]: Captured variable `lock` is not annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def _capture_inputs(layer, input, output) -> None:
             r"""Save activations into layer_inputs in forward pass"""
             with lock:
@@ -869,10 +912,14 @@ class TracInCPFastRandProj(TracInCPFast):
         model: Module,
         final_fc_layer: Module,
         train_dataset: Union[Dataset, DataLoader],
+        # pyre-fixme[24]: Generic type `Iterator` expects 1 type parameter.
         checkpoints: Union[str, List[str], Iterator],
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         checkpoints_load_func: Callable = _load_flexible_state_dict,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         loss_fn: Optional[Union[Module, Callable]] = None,
         batch_size: Union[int, None] = 1,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         test_loss_fn: Optional[Union[Module, Callable]] = None,
         vectorize: bool = False,
         nearest_neighbors: Optional[NearestNeighbors] = None,
@@ -1003,9 +1050,11 @@ class TracInCPFastRandProj(TracInCPFast):
                 "each call to `influence` to compute influence scores or proponents "
                 "will be slower, but may avoid running out of memory."
             )
-            % "`TracInCPFast`"
+            % "`TracInCPFast`",
+            stacklevel=1,
         )
 
+        # pyre-fixme[4]: Attribute must be annotated.
         self.nearest_neighbors = (
             AnnoyNearestNeighbors() if nearest_neighbors is None else nearest_neighbors
         )
@@ -1013,10 +1062,12 @@ class TracInCPFastRandProj(TracInCPFast):
         self.projection_dim = projection_dim
 
         torch.manual_seed(seed)  # for reproducibility
+        # pyre-fixme[4]: Attribute must be annotated.
         self.projection_quantities = self._set_projections_tracincp_fast_rand_proj(
             self.train_dataloader,
         )
 
+        # pyre-fixme[4]: Attribute must be annotated.
         self.src_intermediate_quantities = (
             self._get_intermediate_quantities_tracincp_fast_rand_proj(
                 self.train_dataloader,
@@ -1119,7 +1170,7 @@ class TracInCPFastRandProj(TracInCPFast):
 
         return KMostInfluentialResults(indices, distances)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def self_influence(
         self,
         inputs: Optional[Union[Tuple[Any, ...], DataLoader]] = None,
@@ -1187,11 +1238,12 @@ class TracInCPFastRandProj(TracInCPFast):
                 "random projections results only in approximate self influence "
                 "scores, there is no reason to use `TracInCPFastRandProj` when "
                 "calculating self influence scores."
-            )
+            ),
+            stacklevel=1,
         )
         raise NotImplementedError
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def influence(  # type: ignore[override]
         self,
         inputs: Optional[Tuple[Any, ...]] = None,
@@ -1456,6 +1508,8 @@ class TracInCPFastRandProj(TracInCPFast):
 
         # for each checkpoint, we will populate a list containing the contribution of
         # the checkpoint for each batch
+        # pyre-fixme[24]: Generic type `list` expects 1 type parameter, use
+        #  `typing.List[<element type>]` to avoid runtime subscripting errors.
         checkpoint_contributions: List[Union[List, Tensor]] = [
             [] for _ in self.checkpoints
         ]
@@ -1493,8 +1547,12 @@ class TracInCPFastRandProj(TracInCPFast):
                 # if doing projection, project those two quantities
                 if project:
 
+                    # pyre-fixme[61]: `jacobian_projection` is undefined, or not
+                    #  always defined.
                     input_jacobians = torch.matmul(input_jacobians, jacobian_projection)
 
+                    # pyre-fixme[61]: `layer_input_projection` is undefined, or not
+                    #  always defined.
                     layer_inputs = torch.matmul(layer_inputs, layer_input_projection)
 
                 # for an example, the contribution to the "embedding" vector from each
@@ -1502,6 +1560,8 @@ class TracInCPFastRandProj(TracInCPFast):
                 # `layer_input`, flattened to a 1D tensor. here, we perform this
                 # for the entire batch. we append the contribution to a list containing
                 # the contribution of all batches, from the checkpoint.
+                # pyre-fixme[24]: Generic type `list` expects 1 type parameter, use
+                #  `typing.List[<element type>]` to avoid runtime subscripting errors.
                 cast(list, checkpoint_contributions[j]).append(
                     torch.matmul(
                         torch.unsqueeze(
@@ -1537,7 +1597,7 @@ class TracInCPFastRandProj(TracInCPFast):
         # each row in this result is the "embedding" vector for an example in `batch`
         return torch.cat(checkpoint_contributions, dim=1)  # type: ignore
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def compute_intermediate_quantities(
         self,
         inputs: Union[Tuple[Any, ...], DataLoader],

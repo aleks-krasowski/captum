@@ -1,13 +1,19 @@
-# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 
 import torch
 from captum.attr._core.layer.layer_feature_permutation import LayerFeaturePermutation
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel_MultiLayer
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicModel_MultiLayer
 from torch import Tensor
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestLayerFeaturePermutation(BaseTest):
     def test_single_input(self) -> None:
         net = BasicModel_MultiLayer()

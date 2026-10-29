@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from typing import cast, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import torch
 from captum._utils.typing import Tensor
 from captum.attr._core.gradient_shap import GradientShap
 from captum.attr._core.integrated_gradients import IntegratedGradients
-from numpy import ndarray
-from tests.attr.helpers.attribution_delta_util import (
+from captum.testing.attr.helpers.attribution_delta_util import (
     assert_attribution_delta,
     assert_delta,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicLinearModel, BasicModel2
-from tests.helpers.classification_models import SoftmaxModel
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicLinearModel, BasicModel2
+from captum.testing.helpers.classification_models import SoftmaxModel
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
 
     # This test reproduces some of the test cases from the original implementation
@@ -56,7 +64,9 @@ class Test(BaseTest):
         # Compare with integrated gradients
         ig = IntegratedGradients(model)
         baselines = (torch.zeros(batch_size, 3), torch.zeros(batch_size, 4))
-        attributions_ig = ig.attribute(inputs, baselines=baselines)
+        attributions_ig = ig.attribute(  # type: ignore[has-type]
+            inputs, baselines=baselines
+        )
         self._assert_shap_ig_comparision(attributions, attributions_ig)
 
         # compare attributions retrieved with and without
@@ -120,7 +130,7 @@ class Test(BaseTest):
         )
 
     def test_classification_baselines_as_function(self) -> None:
-        num_in = 40
+        num_in: int = 40
         inputs = torch.arange(0.0, num_in * 2.0).reshape(2, num_in)
 
         def generate_baselines() -> Tensor:
@@ -130,7 +140,7 @@ class Test(BaseTest):
             inp_shape = cast(Tuple[int, ...], inputs.shape)
             return torch.arange(0.0, inp_shape[1] * 2.0).reshape(2, inp_shape[1])
 
-        def generate_baselines_returns_array() -> ndarray:
+        def generate_baselines_returns_array() -> npt.NDArray:
             return np.arange(0.0, num_in * 4.0).reshape(4, num_in)
 
         # 10-class classification model
@@ -211,7 +221,9 @@ class Test(BaseTest):
         # Compare with integrated gradients
         ig = IntegratedGradients(model)
         baselines = torch.arange(0.0, num_in * 2.0).reshape(2, num_in)
-        attributions_ig = ig.attribute(inputs, baselines=baselines, target=target)
+        attributions_ig = ig.attribute(  # type: ignore[has-type]
+            inputs, baselines=baselines, target=target
+        )
         self._assert_shap_ig_comparision((attributions,), (attributions_ig,))
 
     def test_basic_relu_multi_input(self) -> None:
@@ -241,8 +253,18 @@ class Test(BaseTest):
         )
 
         ig = IntegratedGradients(model)
-        attributions_ig = ig.attribute(inputs, baselines=baselines)
+        attributions_ig = ig.attribute(  # type: ignore[has-type]
+            inputs, baselines=baselines
+        )
         self._assert_shap_ig_comparision(attributions, attributions_ig)
+
+    def test_futures_not_implemented(self) -> None:
+        model = BasicModel2()
+        gs = GradientShap(model)
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = gs.attribute_future()
+        self.assertEqual(attributions, None)
 
     def _assert_shap_ig_comparision(
         self, attributions1: Tuple[Tensor, ...], attributions2: Tuple[Tensor, ...]

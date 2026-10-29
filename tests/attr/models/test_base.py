@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
+
 from __future__ import print_function
 
 import unittest
@@ -10,8 +17,8 @@ from captum.attr._models.base import (
     InterpretableEmbeddingBase,
     remove_interpretable_embedding_layer,
 )
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicEmbeddingModel, TextModule
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicEmbeddingModel, TextModule
 from torch.nn import Embedding
 
 

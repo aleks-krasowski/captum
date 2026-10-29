@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 import tempfile
 from typing import Callable, Optional
 
@@ -7,10 +13,9 @@ from captum.influence._core.arnoldi_influence_function import ArnoldiInfluenceFu
 from captum.influence._core.influence_function import NaiveInfluenceFunction
 from captum.influence._core.tracincp import TracInCP, TracInCPBase
 from captum.influence._core.tracincp_fast_rand_proj import TracInCPFast
-from parameterized import parameterized
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.influence.common import (
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.influence.common import (
     _format_batch_into_tuple,
     build_test_name_func,
     DataInfluenceConstructor,
@@ -18,9 +23,11 @@ from tests.helpers.influence.common import (
     GPU_SETTING_LIST,
     is_gpu,
 )
+from parameterized import parameterized
 from torch.utils.data import DataLoader
 
 
+# pyrefly: ignore [invalid-inheritance]
 class TestTracInSelfInfluence(BaseTest):
 
     param_list = []
@@ -160,6 +167,7 @@ class TestTracInSelfInfluence(BaseTest):
         gpu_setting: Optional[str],
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,
@@ -183,7 +191,11 @@ class TestTracInSelfInfluence(BaseTest):
             )
             train_scores = tracin.influence(
                 _format_batch_into_tuple(
-                    train_dataset.samples, train_dataset.labels, unpack_inputs
+                    # pyrefly: ignore [missing-attribute]
+                    train_dataset.samples,
+                    # pyrefly: ignore [missing-attribute]
+                    train_dataset.labels,
+                    unpack_inputs,
                 ),
                 k=None,
             )
@@ -204,15 +216,14 @@ class TestTracInSelfInfluence(BaseTest):
             # this test is only relevant for implementations of `TracInCPBase`, as
             # implementations of `InfluenceFunctionBase` do not use checkpoints.
             if isinstance(tracin, TracInCPBase):
-                self_tracin_scores_by_checkpoints = (
-                    tracin.self_influence(  # type: ignore
-                        DataLoader(train_dataset, batch_size=batch_size),
-                        outer_loop_by_checkpoints=True,
-                    )
+                self_scores_by_checkpoints = tracin.self_influence(  # type: ignore
+                    DataLoader(train_dataset, batch_size=batch_size),
+                    # pyrefly: ignore [unexpected-keyword]
+                    outer_loop_by_checkpoints=True,
                 )
                 assertTensorAlmostEqual(
                     self,
-                    self_tracin_scores_by_checkpoints,
+                    self_scores_by_checkpoints,
                     self_tracin_scores,
                     delta=0.01,
                     mode="max",
@@ -244,6 +255,7 @@ class TestTracInSelfInfluence(BaseTest):
         # DataLoader of batches is the same as when the batches are collated into a
         # single batch
         with tempfile.TemporaryDirectory() as tmpdir:
+            # pyrefly: ignore [bad-unpacking]
             (
                 net,
                 train_dataset,
@@ -251,6 +263,7 @@ class TestTracInSelfInfluence(BaseTest):
 
             # create a single batch representing the entire dataset
             single_batch = next(
+                # pyrefly: ignore [bad-argument-type]
                 iter(DataLoader(train_dataset, batch_size=len(train_dataset)))
             )
 

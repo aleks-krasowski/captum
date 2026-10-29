@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import typing
 from collections import defaultdict
-from typing import Any, cast, List, Tuple, Union
+from typing import Any, cast, Dict, List, Literal, Optional, Tuple, Union
 
 import torch.nn as nn
 from captum._utils.common import (
@@ -16,7 +23,7 @@ from captum._utils.gradient import (
     apply_gradient_requirements,
     undo_gradient_requirements,
 )
-from captum._utils.typing import Literal, TargetType, TensorOrTupleOfTensorsGeneric
+from captum._utils.typing import TargetType, TensorOrTupleOfTensorsGeneric
 from captum.attr._utils.attribution import GradientAttribution
 from captum.attr._utils.common import _sum_rows
 from captum.attr._utils.custom_modules import Addition_Module
@@ -41,6 +48,12 @@ class LRP(GradientAttribution):
     Ancona et al. [https://openreview.net/forum?id=Sy21R9JAW].
     """
 
+    verbose: bool = False
+    _original_state_dict: Dict[str, Any] = {}
+    layers: List[Module] = []
+    backward_handles: List[RemovableHandle] = []
+    forward_handles: List[RemovableHandle] = []
+
     def __init__(self, model: Module) -> None:
         r"""
         Args:
@@ -53,6 +66,7 @@ class LRP(GradientAttribution):
         """
         GradientAttribution.__init__(self, model)
         self.model = model
+        self._layers_with_added_rules: List[Module] = []
         self._check_rules()
 
     @property
@@ -60,32 +74,34 @@ class LRP(GradientAttribution):
         return True
 
     @typing.overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
-        return_convergence_delta: Literal[False] = False,
-        verbose: bool = False,
-    ) -> TensorOrTupleOfTensorsGeneric: ...
-
-    @typing.overload
-    def attribute(
-        self,
-        inputs: TensorOrTupleOfTensorsGeneric,
-        target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         *,
         return_convergence_delta: Literal[True],
         verbose: bool = False,
     ) -> Tuple[TensorOrTupleOfTensorsGeneric, Tensor]: ...
 
-    @log_usage()
+    @typing.overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
+        return_convergence_delta: Literal[False] = False,
+        verbose: bool = False,
+    ) -> TensorOrTupleOfTensorsGeneric: ...
+
+    @log_usage(part_of_slo=True)
+    def attribute(
+        self,
+        inputs: TensorOrTupleOfTensorsGeneric,
+        target: TargetType = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: bool = False,
         verbose: bool = False,
     ) -> Union[
@@ -186,26 +202,29 @@ class LRP(GradientAttribution):
         """
         self.verbose = verbose
         self._original_state_dict = self.model.state_dict()
-        self.layers: List[Module] = []
+        self.layers = []
         self._get_layers(self.model)
+        self._layers_with_added_rules = []
         self._check_and_attach_rules()
         self.backward_handles: List[RemovableHandle] = []
         self.forward_handles: List[RemovableHandle] = []
 
         is_inputs_tuple = _is_tuple(inputs)
-        inputs = _format_tensor_into_tuples(inputs)
-        gradient_mask = apply_gradient_requirements(inputs)
+        input_tuple = _format_tensor_into_tuples(inputs)
+        gradient_mask = apply_gradient_requirements(input_tuple)
 
         try:
             # 1. Forward pass: Change weights of layers according to selected rules.
             output = self._compute_output_and_change_weights(
-                inputs, target, additional_forward_args
+                input_tuple,
+                target,
+                additional_forward_args,
             )
             # 2. Forward pass + backward pass: Register hooks to configure relevance
             # propagation and execute back-propagation.
             self._register_forward_hooks()
             normalized_relevances = self.gradient_func(
-                self._forward_fn_wrapper, inputs, target, additional_forward_args
+                self._forward_fn_wrapper, input_tuple, target, additional_forward_args
             )
             relevances = tuple(
                 normalized_relevance
@@ -215,15 +234,24 @@ class LRP(GradientAttribution):
         finally:
             self._restore_model()
 
-        undo_gradient_requirements(inputs, gradient_mask)
+        undo_gradient_requirements(input_tuple, gradient_mask)
 
         if return_convergence_delta:
             return (
-                _format_output(is_inputs_tuple, relevances),
+                cast(
+                    TensorOrTupleOfTensorsGeneric,
+                    _format_output(is_inputs_tuple, relevances),
+                ),
                 self.compute_convergence_delta(relevances, output),
             )
         else:
             return _format_output(is_inputs_tuple, relevances)  # type: ignore
+
+    def attribute_future(self) -> None:
+        r"""
+        This method is not implemented for LRP.
+        """
+        raise NotImplementedError("attribute_future is not implemented for LRP")
 
     def has_convergence_delta(self) -> bool:
         return True
@@ -265,6 +293,7 @@ class LRP(GradientAttribution):
                 )
         else:
             summed_attr = _sum_rows(attributions)
+        # pyrefly: ignore [unbound-name]
         return output.flatten() - summed_attr.flatten()
 
     def _get_layers(self, model: Module) -> None:
@@ -284,10 +313,12 @@ class LRP(GradientAttribution):
             elif type(layer) in SUPPORTED_LAYERS_WITH_RULES.keys():
                 layer.activations = {}  # type: ignore
                 layer.rule = SUPPORTED_LAYERS_WITH_RULES[type(layer)]()  # type: ignore
+                self._layers_with_added_rules.append(layer)
                 layer.rule.relevance_input = defaultdict(list)  # type: ignore
                 layer.rule.relevance_output = {}  # type: ignore
             elif type(layer) in SUPPORTED_NON_LINEAR_LAYERS:
                 layer.rule = None  # type: ignore
+                self._layers_with_added_rules.append(layer)
             else:
                 raise TypeError(
                     (
@@ -347,7 +378,7 @@ class LRP(GradientAttribution):
         self,
         inputs: Tuple[Tensor, ...],
         target: TargetType,
-        additional_forward_args: Any,
+        additional_forward_args: Optional[object],
     ) -> Tensor:
         try:
             self._register_weight_hooks()
@@ -379,7 +410,7 @@ class LRP(GradientAttribution):
                 layer.rule._handle_output_hook.remove()  # type: ignore
 
     def _remove_rules(self) -> None:
-        for layer in self.layers:
+        for layer in self._layers_with_added_rules:
             if hasattr(layer, "rule"):
                 del layer.rule
 
@@ -416,11 +447,19 @@ SUPPORTED_LAYERS_WITH_RULES = {
     nn.MaxPool1d: EpsilonRule,
     nn.MaxPool2d: EpsilonRule,
     nn.MaxPool3d: EpsilonRule,
+    nn.Conv1d: EpsilonRule,
     nn.Conv2d: EpsilonRule,
+    nn.Conv3d: EpsilonRule,
+    nn.AvgPool1d: EpsilonRule,
     nn.AvgPool2d: EpsilonRule,
+    nn.AvgPool3d: EpsilonRule,
+    nn.AdaptiveAvgPool1d: EpsilonRule,
     nn.AdaptiveAvgPool2d: EpsilonRule,
+    nn.AdaptiveAvgPool3d: EpsilonRule,
     nn.Linear: EpsilonRule,
+    nn.BatchNorm1d: EpsilonRule,
     nn.BatchNorm2d: EpsilonRule,
+    nn.BatchNorm3d: EpsilonRule,
     Addition_Module: EpsilonRule,
 }
 

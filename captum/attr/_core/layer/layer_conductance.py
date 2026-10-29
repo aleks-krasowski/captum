@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
 import typing
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, cast, Dict, List, Literal, Optional, Tuple, Union
 
 import torch
 from captum._utils.common import (
@@ -10,7 +17,7 @@ from captum._utils.common import (
     _format_output,
 )
 from captum._utils.gradient import compute_layer_gradients_and_eval
-from captum._utils.typing import BaselineType, Literal, TargetType
+from captum._utils.typing import BaselineType, TargetType
 from captum.attr._utils.approximation_methods import approximation_parameters
 from captum.attr._utils.attribution import GradientAttribution, LayerAttribution
 from captum.attr._utils.batching import _batch_attribution
@@ -42,7 +49,7 @@ class LayerConductance(LayerAttribution, GradientAttribution):
 
     def __init__(
         self,
-        forward_func: Callable,
+        forward_func: Callable[..., Tensor],
         layer: Module,
         device_ids: Union[None, List[int]] = None,
     ) -> None:
@@ -70,12 +77,13 @@ class LayerConductance(LayerAttribution, GradientAttribution):
         return True
 
     @typing.overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
@@ -86,12 +94,13 @@ class LayerConductance(LayerAttribution, GradientAttribution):
     ) -> Tuple[Union[Tensor, Tuple[Tensor, ...]], Tensor]: ...
 
     @typing.overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
@@ -100,7 +109,7 @@ class LayerConductance(LayerAttribution, GradientAttribution):
         grad_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[Tensor, Tuple[Tensor, ...]]: ...
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
@@ -108,7 +117,7 @@ class LayerConductance(LayerAttribution, GradientAttribution):
             None, int, float, Tensor, Tuple[Union[int, float, Tensor], ...]
         ] = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
@@ -315,7 +324,9 @@ class LayerConductance(LayerAttribution, GradientAttribution):
                 target=target,
                 additional_forward_args=additional_forward_args,
             )
+            # pyrefly: ignore [no-matching-overload]
             return _format_output(is_layer_tuple, attributions), delta
+        # pyrefly: ignore [no-matching-overload]
         return _format_output(is_layer_tuple, attributions)
 
     def _attribute(
@@ -323,7 +334,7 @@ class LayerConductance(LayerAttribution, GradientAttribution):
         inputs: Tuple[Tensor, ...],
         baselines: Tuple[Union[Tensor, int, float], ...],
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         attribute_to_layer_input: bool = False,
@@ -367,7 +378,7 @@ class LayerConductance(LayerAttribution, GradientAttribution):
             layer_evals,
         ) = compute_layer_gradients_and_eval(
             forward_fn=self.forward_func,
-            layer=self.layer,
+            layer=cast(Module, self.layer),
             inputs=scaled_features_tpl,
             additional_forward_args=input_additional_args,
             target_ind=expanded_target,
@@ -392,7 +403,7 @@ class LayerConductance(LayerAttribution, GradientAttribution):
                 grad_diff * layer_gradient[:-num_examples],
                 n_steps,
                 num_examples,
-                layer_eval.shape[1:],
+                tuple(layer_eval.shape[1:]),
             )
             for layer_gradient, layer_eval, grad_diff in zip(
                 layer_gradients, layer_evals, grad_diffs
@@ -401,5 +412,5 @@ class LayerConductance(LayerAttribution, GradientAttribution):
         return _format_output(len(attributions) > 1, attributions)
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return True

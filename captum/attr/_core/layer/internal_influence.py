@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Union
 
 import torch
 from captum._utils.common import (
@@ -39,7 +46,7 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
 
     def __init__(
         self,
-        forward_func: Callable,
+        forward_func: Callable[..., Tensor],
         layer: Module,
         device_ids: Union[None, List[int]] = None,
     ) -> None:
@@ -63,13 +70,13 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
         LayerAttribution.__init__(self, forward_func, layer, device_ids)
         GradientAttribution.__init__(self, forward_func)
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: BaselineType = None,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
@@ -243,6 +250,7 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
                 grad_kwargs=grad_kwargs,
             )
 
+        # pyrefly: ignore [bad-return]
         return attrs
 
     def _attribute(
@@ -250,7 +258,7 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
         inputs: Tuple[Tensor, ...],
         baselines: Tuple[Union[Tensor, int, float], ...],
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         n_steps: int = 50,
         method: str = "gausslegendre",
         attribute_to_layer_input: bool = False,
@@ -290,7 +298,7 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
         # Returns gradient of output with respect to hidden layer.
         layer_gradients, _ = compute_layer_gradients_and_eval(
             forward_fn=self.forward_func,
-            layer=self.layer,
+            layer=cast(Module, self.layer),
             inputs=scaled_features_tpl,
             target_ind=expanded_target,
             additional_forward_args=input_additional_args,
@@ -309,7 +317,10 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
         # aggregates across all steps for each tensor in the input tuple
         attrs = tuple(
             _reshape_and_sum(
-                scaled_grad, n_steps, inputs[0].shape[0], layer_grad.shape[1:]
+                scaled_grad,
+                n_steps,
+                inputs[0].shape[0],
+                tuple(layer_grad.shape[1:]),
             )
             for scaled_grad, layer_grad in zip(scaled_grads, layer_gradients)
         )

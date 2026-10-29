@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 from __future__ import print_function
 
 import unittest
 from typing import Any, Tuple, Union
 
 import torch
-from captum._utils.typing import TensorOrTupleOfTensorsGeneric
+from captum._utils.typing import SliceIntType, TensorOrTupleOfTensorsGeneric
 from captum.attr._core.guided_backprop_deconvnet import Deconvolution
 from captum.attr._core.neuron.neuron_guided_backprop_deconvnet import (
     NeuronDeconvolution,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel_ConvNet_One_Conv
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicModel_ConvNet_One_Conv
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_simple_input_conv_deconv(self) -> None:
         net = BasicModel_ConvNet_One_Conv()
@@ -105,7 +113,7 @@ class Test(BaseTest):
         self,
         model: Module,
         layer: Module,
-        neuron_selector: Union[int, Tuple[Union[int, slice], ...]],
+        neuron_selector: Union[int, Tuple[Union[int, SliceIntType], ...]],
         test_input: TensorOrTupleOfTensorsGeneric,
         expected: Tuple[torch.Tensor, ...],
         additional_input: Any = None,

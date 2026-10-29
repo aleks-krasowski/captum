@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-unsafe
 from typing import Callable, Tuple, Union
 
 import torch
@@ -6,14 +13,15 @@ from captum.attr._core.neuron.neuron_gradient_shap import NeuronGradientShap
 from captum.attr._core.neuron.neuron_integrated_gradients import (
     NeuronIntegratedGradients,
 )
-from tests.helpers import BaseTest
-from tests.helpers.basic import assertTensorAlmostEqual
-from tests.helpers.basic_models import BasicModel_MultiLayer
-from tests.helpers.classification_models import SoftmaxModel
+from captum.testing.helpers import BaseTest
+from captum.testing.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic_models import BasicModel_MultiLayer
+from captum.testing.helpers.classification_models import SoftmaxModel
 from torch import Tensor
 from torch.nn import Module
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_basic_multilayer(self) -> None:
         model = BasicModel_MultiLayer(inplace=True)

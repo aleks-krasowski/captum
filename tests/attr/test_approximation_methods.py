@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import unittest
 from typing import List
 
 import torch
 from captum.attr._utils.approximation_methods import Riemann, riemann_builders
-from tests.helpers.basic import assertTensorAlmostEqual
+from captum.testing.helpers.basic import assertTensorAlmostEqual
 
 
 class Test(unittest.TestCase):
@@ -13,9 +20,10 @@ class Test(unittest.TestCase):
         super().__init__(methodName)
 
     def test_riemann_0(self) -> None:
+        step_sizes, alphas = riemann_builders()
         with self.assertRaises(AssertionError):
-            step_sizes, alphas = riemann_builders()
             step_sizes(0)
+        with self.assertRaises(AssertionError):
             alphas(0)
 
     def test_riemann_2(self) -> None:

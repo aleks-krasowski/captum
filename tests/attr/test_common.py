@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import torch
 from captum.attr._core.noise_tunnel import SUPPORTED_NOISE_TUNNEL_TYPES
 from captum.attr._utils.common import _validate_input, _validate_noise_tunnel_type
-from tests.helpers import BaseTest
+from captum.testing.helpers import BaseTest
 
 
+# pyrefly: ignore [invalid-inheritance]
 class Test(BaseTest):
     def test_validate_input(self) -> None:
         with self.assertRaises(AssertionError) as err:

@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-from typing import Any, cast, Tuple, Union
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+from typing import cast, Optional, Tuple, Union
 
 import torch
 from captum._utils.typing import TensorOrTupleOfTensorsGeneric
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._core.saliency import Saliency
-
-from tests.attr.helpers.get_config_util import (
+from captum.testing.attr.helpers.get_config_util import (
     get_basic_config,
     get_multiargs_basic_config,
     get_multiargs_basic_config_large,
 )
-from tests.helpers.basic import (
+from captum.testing.helpers.basic import (
     assertTensorAlmostEqual,
     assertTensorTuplesAlmostEqual,
     BaseTest,
 )
-from tests.helpers.classification_models import SoftmaxModel
+from captum.testing.helpers.classification_models import SoftmaxModel
 from torch import Tensor
 from torch.nn import Module
 
@@ -105,14 +111,22 @@ class Test(BaseTest):
         self._saliency_base_assert(model, inp, grads, add_args)
         assertTensorTuplesAlmostEqual(self, inp.grad, grad, delta=0.0)
 
+    def test_futures_not_implemented(self) -> None:
+        model, inp, grads, add_args = get_basic_config()
+        saliency = Saliency(model)
+        attributions = None
+        with self.assertRaises(NotImplementedError):
+            attributions = saliency.attribute_future()  # type: ignore
+        self.assertEqual(attributions, None)
+
     def _saliency_base_assert(
         self,
         model: Module,
         inputs: TensorOrTupleOfTensorsGeneric,
         expected: TensorOrTupleOfTensorsGeneric,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         nt_type: str = "vanilla",
-        n_samples_batch_size=None,
+        n_samples_batch_size: Optional[int] = None,
     ) -> Union[Tensor, Tuple[Tensor, ...]]:
         saliency = Saliency(model)
 

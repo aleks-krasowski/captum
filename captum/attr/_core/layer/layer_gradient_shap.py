@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+# pyre-strict
+
 import typing
-from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, cast, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from captum._utils.gradient import _forward_layer_eval, compute_layer_gradients_and_eval
-from captum._utils.typing import Literal, TargetType, TensorOrTupleOfTensorsGeneric
+from captum._utils.typing import TargetType, TensorOrTupleOfTensorsGeneric
 from captum.attr._core.gradient_shap import _scale_input
 from captum.attr._core.noise_tunnel import NoiseTunnel
 from captum.attr._utils.attribution import GradientAttribution, LayerAttribution
@@ -59,7 +66,7 @@ class LayerGradientShap(LayerAttribution, GradientAttribution):
 
     def __init__(
         self,
-        forward_func: Callable,
+        forward_func: Callable[..., Tensor],
         layer: Module,
         device_ids: Union[None, List[int]] = None,
         multiply_by_inputs: bool = True,
@@ -101,41 +108,49 @@ class LayerGradientShap(LayerAttribution, GradientAttribution):
         self._multiply_by_inputs = multiply_by_inputs
 
     @typing.overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        baselines: Union[TensorOrTupleOfTensorsGeneric, Callable],
+        baselines: Union[
+            TensorOrTupleOfTensorsGeneric, Callable[..., TensorOrTupleOfTensorsGeneric]
+        ],
         n_samples: int = 5,
         stdevs: Union[float, Tuple[float, ...]] = 0.0,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         *,
         return_convergence_delta: Literal[True],
         attribute_to_layer_input: bool = False,
     ) -> Tuple[Union[Tensor, Tuple[Tensor, ...]], Tensor]: ...
 
     @typing.overload
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        baselines: Union[TensorOrTupleOfTensorsGeneric, Callable],
+        baselines: Union[
+            TensorOrTupleOfTensorsGeneric, Callable[..., TensorOrTupleOfTensorsGeneric]
+        ],
         n_samples: int = 5,
         stdevs: Union[float, Tuple[float, ...]] = 0.0,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: Literal[False] = False,
         attribute_to_layer_input: bool = False,
     ) -> Union[Tensor, Tuple[Tensor, ...]]: ...
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        baselines: Union[TensorOrTupleOfTensorsGeneric, Callable],
+        baselines: Union[
+            TensorOrTupleOfTensorsGeneric, Callable[..., TensorOrTupleOfTensorsGeneric]
+        ],
         n_samples: int = 5,
         stdevs: Union[float, Tuple[float, ...]] = 0.0,
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: bool = False,
         attribute_to_layer_input: bool = False,
     ) -> Union[
@@ -284,10 +299,10 @@ class LayerGradientShap(LayerAttribution, GradientAttribution):
         """
         # since `baselines` is a distribution, we can generate it using a function
         # rather than passing it as an input argument
-        baselines = _format_callable_baseline(baselines, inputs)
-        assert isinstance(baselines[0], torch.Tensor), (
+        formatted_baselines = _format_callable_baseline(baselines, inputs)
+        assert isinstance(formatted_baselines[0], torch.Tensor), (
             "Baselines distribution has to be provided in a form "
-            "of a torch.Tensor {}.".format(baselines[0])
+            "of a torch.Tensor {}.".format(formatted_baselines[0])
         )
 
         input_min_baseline_x_grad = LayerInputBaselineXGradient(
@@ -306,7 +321,7 @@ class LayerGradientShap(LayerAttribution, GradientAttribution):
             nt_samples=n_samples,
             stdevs=stdevs,
             draw_baseline_from_distrib=True,
-            baselines=baselines,
+            baselines=formatted_baselines,
             target=target,
             additional_forward_args=additional_forward_args,
             return_convergence_delta=return_convergence_delta,
@@ -319,14 +334,14 @@ class LayerGradientShap(LayerAttribution, GradientAttribution):
         return True
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return self._multiply_by_inputs
 
 
 class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
     def __init__(
         self,
-        forward_func: Callable,
+        forward_func: Callable[..., Tensor],
         layer: Module,
         device_ids: Union[None, List[int]] = None,
         multiply_by_inputs: bool = True,
@@ -373,11 +388,12 @@ class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: Union[Tensor, Tuple[Tensor, ...]],
         target: TargetType = None,
-        additional_forward_args: Any = None,
-        return_convergence_delta: Literal[False] = False,
+        additional_forward_args: Optional[object] = None,
+        *,
+        return_convergence_delta: Literal[True],
         attribute_to_layer_input: bool = False,
         grad_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Union[Tensor, Tuple[Tensor, ...]]: ...
+    ) -> Tuple[Union[Tensor, Tuple[Tensor, ...]], Tensor]: ...
 
     @typing.overload
     def attribute(
@@ -385,20 +401,19 @@ class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: Union[Tensor, Tuple[Tensor, ...]],
         target: TargetType = None,
-        additional_forward_args: Any = None,
-        *,
-        return_convergence_delta: Literal[True],
+        additional_forward_args: Optional[object] = None,
+        return_convergence_delta: Literal[False] = False,
         attribute_to_layer_input: bool = False,
         grad_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Union[Tensor, Tuple[Tensor, ...]], Tensor]: ...
+    ) -> Union[Tensor, Tuple[Tensor, ...]]: ...
 
-    @log_usage()
+    @log_usage(part_of_slo=True)
     def attribute(  # type: ignore
         self,
         inputs: Union[Tensor, Tuple[Tensor, ...]],
         baselines: Union[Tensor, Tuple[Tensor, ...]],
         target: TargetType = None,
-        additional_forward_args: Any = None,
+        additional_forward_args: Optional[object] = None,
         return_convergence_delta: bool = False,
         attribute_to_layer_input: bool = False,
         grad_kwargs: Optional[Dict[str, Any]] = None,
@@ -418,7 +433,7 @@ class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
         )
         grads, _ = compute_layer_gradients_and_eval(
             self.forward_func,
-            self.layer,
+            cast(Module, self.layer),
             input_baseline_scaled,
             target,
             additional_forward_args,
@@ -430,7 +445,7 @@ class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
         attr_baselines = _forward_layer_eval(
             self.forward_func,
             baselines,
-            self.layer,
+            cast(Module, self.layer),
             additional_forward_args=additional_forward_args,
             device_ids=self.device_ids,
             attribute_to_layer_input=attribute_to_layer_input,
@@ -439,12 +454,12 @@ class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
         attr_inputs = _forward_layer_eval(
             self.forward_func,
             inputs,
-            self.layer,
+            cast(Module, self.layer),
             additional_forward_args=additional_forward_args,
             device_ids=self.device_ids,
             attribute_to_layer_input=attribute_to_layer_input,
         )
-
+        attributions: Tuple[Tensor, ...]
         if self.multiplies_by_inputs:
             input_baseline_diffs = tuple(
                 input - baseline for input, baseline in zip(attr_inputs, attr_baselines)
@@ -471,5 +486,5 @@ class LayerInputBaselineXGradient(LayerAttribution, GradientAttribution):
         return True
 
     @property
-    def multiplies_by_inputs(self):
+    def multiplies_by_inputs(self) -> bool:
         return self._multiply_by_inputs
