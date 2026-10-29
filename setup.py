@@ -110,7 +110,6 @@ def get_package_files(root, subdirs):
 
 
 if __name__ == "__main__":
-
     if BUILD_INSIGHTS:
         build_insights()
 
@@ -147,7 +146,7 @@ if __name__ == "__main__":
         long_description=long_description,
         long_description_content_type="text/markdown",
         python_requires=">=3.8",
-        install_requires=["matplotlib", "numpy<2.0", "torch>=1.10", "tqdm"],
+        install_requires=["matplotlib", "numpy", "torch>=1.10", "tqdm"],
         packages=find_packages(exclude=("tests", "tests.*")),
         extras_require={
             "dev": DEV_REQUIRES,
