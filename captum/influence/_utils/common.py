@@ -290,7 +290,7 @@ def _get_k_most_influential_helper(
             total=total,
         )
 
-    for batch in influence_src_dataloader:
+    for batch in data_iterator:
         # calculate tracin_scores for the batch
         batch_tracin_scores = influence_batch_fn(inputs, batch)
         batch_tracin_scores *= multiplier
